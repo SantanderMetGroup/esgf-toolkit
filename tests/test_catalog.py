@@ -73,7 +73,7 @@ def test_write_collection_csvs(tmp_path):
     assert list(rows[0]) == LOCAL_COLUMNS
     assert len(rows) == 2
     assert rows[0]["collection"] == "CORDEX-CMIP6"
-    assert int(rows[0]["n_files"]) in (1, 2)
+    assert "time_period" in rows[0]
 
 
 def test_union_fieldnames_covers_extra_keys():

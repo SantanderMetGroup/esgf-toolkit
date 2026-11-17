@@ -32,7 +32,7 @@ STATUS_PARTIAL = "partial"
 STATUS_MISSING = "missing"
 
 SHOW_LOCAL_COLS = ["collection", "model", "rcm_model", "driving_model", "institution",
-                   "experiment", "member", "variable", "frequency", "n_files", "size_gb"]
+                   "experiment", "member", "variable", "frequency", "time_period", "size_gb"]
 
 
 def fmt_row(item, out_dir: str, sizes: dict, base: dict, statuses: dict, show_missing_only: bool):
@@ -183,17 +183,15 @@ def main():
     local = catalog_rows(sizes, {**filters, "collection": args.collection})
     if local:
         write_collection_csvs(local, args.csv_dir)
-        n_leaves = n_files = size_bytes = 0
+        n_leaves = size_bytes = 0
         for coll in sorted(local):
             rows = local[coll]
-            files = sum(r["n_files"] for r in rows)
-            gb = sum(r["size_bytes"] for r in rows) / 1e9
+            gb = sum(r.get("size_bytes", 0) for r in rows) / 1e9
             n_leaves += len(rows)
-            n_files += files
-            size_bytes += sum(r["size_bytes"] for r in rows)
-            print(f"  {coll}: {len(rows)} leaf dir(s), {files} file(s), {gb:.2f} GB "
+            size_bytes += sum(r.get("size_bytes", 0) for r in rows)
+            print(f"  {coll}: {len(rows)} leaf dir(s), {gb:.2f} GB "
                   f"-> {os.path.join(args.csv_dir, coll + '.csv')}")
-        print(f"Local catalogue: {n_leaves} leaf dir(s), {n_files} file(s), "
+        print(f"Local catalogue: {n_leaves} leaf dir(s), "
               f"{size_bytes / 1e9:.2f} GB in {len(local)} CSV(s) under {args.csv_dir}")
         if args.show:
             print()

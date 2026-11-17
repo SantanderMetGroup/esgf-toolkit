@@ -10,11 +10,20 @@ from .cql import parse_filter_values
 LOCAL_COLUMNS = [
     "collection", "activity", "domain", "institution", "driving_institution",
     "model", "rcm_model", "driving_model", "experiment", "member",
-    "frequency", "grid", "variable", "leaf_dir",
-    "n_files", "size_bytes", "size_gb",
+    "frequency", "grid", "variable", "version", "latest", "leaf_dir",
+    "time_period", "start", "end", "n_years", "size_bytes", "size_gb",
 ]
 
+# Columns filled in after grouping (excluded from the sort key).
+_DERIVED_COLUMNS = ("latest", "time_period", "start", "end", "n_years", "size_bytes", "size_gb")
+
+# Frequencies without a time axis (no date range in the filename).
+FIXED_FREQUENCIES = {"fx", "fixed", "ofx"}
+
 _VERSION_RE = re.compile(r"v\d+")
+# Filename date range: YYYY, YYYYMM, YYYYMMDD or sub-daily YYYYMMDDhh[mm] stamps.
+_STAMP = r"(\d{12}|\d{10}|\d{8}|\d{6}|\d{4})"
+_DATE_RANGE_RE = re.compile(rf"_{_STAMP}-{_STAMP}(?:-clim)?(?:\.nc)?$")
 
 
 def scan_local(out_dir: str):
@@ -41,6 +50,58 @@ def is_present(lp: str, size, out_dir: str, sizes: dict, base: dict) -> bool:
         if cand in sizes:
             return sizes[cand] == size if size else True
     return False
+
+
+
+def _format_ym(yyyymm: str) -> str:
+    if not yyyymm or len(yyyymm) < 6:
+        return yyyymm
+    return f"{yyyymm[:4]}-{yyyymm[4:6]}"
+
+
+def _extract_temporal_range_from_name(name: str):
+    """(start, end) as YYYYMM strings from a filename date range, else (None, None).
+
+    Accepts YYYY, YYYYMM, YYYYMMDD and sub-daily YYYYMMDDhh[mm] stamps, e.g.
+    ``tas_..._1hr_195101010030-195112312330.nc`` -> ("195101", "195112").
+    """
+    m = _DATE_RANGE_RE.search(name)
+    if not m:
+        return None, None
+    s, e = m.group(1), m.group(2)
+    s = s[:6] if len(s) >= 6 else s + "01"
+    e = e[:6] if len(e) >= 6 else e + "12"
+    return s, e
+
+
+def _months_between(start: str, end: str) -> int:
+    """Inclusive number of months between two YYYYMM strings."""
+    y1, m1, y2, m2 = int(start[:4]), int(start[4:6]), int(end[:4]), int(end[4:6])
+    return max(0, (y2 - y1) * 12 + (m2 - m1) + 1)
+
+
+def temporal_fields(relpaths, frequency: str = "") -> dict:
+    """time_period / start / end / n_years for the files of one leaf directory.
+
+    The period is the union envelope (earliest start to latest end) of the
+    filename date ranges; fixed-frequency (fx) data gets time_period "fixed".
+    """
+    if (frequency or "").lower() in FIXED_FREQUENCIES:
+        return {"time_period": "fixed", "start": "", "end": "", "n_years": ""}
+    starts, ends = [], []
+    for rp in relpaths:
+        if rp.endswith(".part"):
+            continue
+        s, e = _extract_temporal_range_from_name(os.path.basename(rp))
+        if s and e:
+            starts.append(s)
+            ends.append(e)
+    if not starts:
+        return {"time_period": "", "start": "", "end": "", "n_years": ""}
+    smin, emax = min(starts), max(ends)
+    start, end = _format_ym(smin), _format_ym(emax)
+    return {"time_period": f"{start}–{end}", "start": start, "end": end,
+            "n_years": round(_months_between(smin, emax) / 12, 1)}
 
 
 def _map_facets(raw: dict) -> dict:
@@ -113,14 +174,21 @@ def _row_matches(row: dict, filters: dict) -> bool:
     return True
 
 
+def _dataset_dir(leaf: str, version: str) -> str:
+    return leaf.rsplit("/", 1)[0] if version else leaf
+
+
 def catalog_rows(sizes: dict, filters: dict | None = None) -> dict:
     """Group scanned files into {collection: [leaf-dir rows]} with facet filters.
 
-    One row per leaf directory, holding the parsed DRS facets plus the number
-    of files and their total size; '.part' files are ignored.
+    One row per leaf directory (= one dataset version) with the parsed DRS
+    facets, the version and whether it is the newest local version (`latest`),
+    the temporal period covered (display `time_period` plus machine-friendly
+    `start`/`end`/`n_years`) and total size; '.part' files are ignored.
     """
     active = {k: v for k, v in (filters or {}).items() if v}
     grouped = {}
+    group_files = {}
     for relpath, size in sizes.items():
         if relpath.endswith(".part"):
             continue
@@ -130,13 +198,26 @@ def catalog_rows(sizes: dict, filters: dict | None = None) -> dict:
         row["leaf_dir"] = info["leaf"]
         if not _row_matches(row, active):
             continue
-        g = grouped.setdefault((info["collection"], info["leaf"]), row)
-        g["n_files"] = g.get("n_files", 0) + 1
-        g["size_bytes"] = g.get("size_bytes", 0) + (size or 0)
+        key = (info["collection"], info["leaf"])
+        if key not in grouped:
+            last = info["leaf"].rsplit("/", 1)[-1]
+            row["version"] = last if _VERSION_RE.fullmatch(last) else ""
+            row["size_bytes"] = 0
+            grouped[key] = row
+        grouped[key]["size_bytes"] += size or 0
+        group_files.setdefault(key, []).append(relpath)
+
+    newest = {}  # (collection, dataset dir) -> highest local version
+    for (coll, leaf), row in grouped.items():
+        k = (coll, _dataset_dir(leaf, row["version"]))
+        newest[k] = max(newest.get(k, ""), row["version"])
+
     out = {}
-    order = [c for c in LOCAL_COLUMNS if c not in ("n_files", "size_bytes", "size_gb")]
-    for (coll, _), row in grouped.items():
+    order = [c for c in LOCAL_COLUMNS if c not in _DERIVED_COLUMNS]
+    for (coll, leaf), row in grouped.items():
+        row["latest"] = row["version"] == newest[(coll, _dataset_dir(leaf, row["version"]))]
         row["size_gb"] = round(row["size_bytes"] / 1e9, 3)
+        row.update(temporal_fields(group_files[(coll, leaf)], row.get("frequency", "")))
         out.setdefault(coll or "other", []).append(row)
     for rows in out.values():
         rows.sort(key=lambda r: tuple(str(r.get(c, "")) for c in order))

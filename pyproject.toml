@@ -30,3 +30,9 @@ stac_download = { cmd = "python -m esgf_stac.cli.download", depends-on = ["stac_
 stac_catalog = "python -m esgf_stac.cli.catalog"
 stac_plot = "python -m esgf_stac.cli.plot"
 stac_plot_cds = "python -m esgf_stac.cli.plot_cds"
+stac_site = "python -m esgf_stac.cli.site"
+site_serve = "python -m http.server --directory docs 8000"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

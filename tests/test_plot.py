@@ -1,27 +1,67 @@
 import sys
 
 from esgf_stac.cli.catalog import write_collection_csvs
-from esgf_stac.cli.plot import aggregate, filter_downloaded_variables, filter_rows, main
+from esgf_stac.cli.plot import (
+    aggregate,
+    filter_downloaded_variables,
+    filter_rows,
+    main,
+    row_interval,
+    union_months,
+)
 
 from .test_local import _sizes
 
 
 def _local_rows():
     return [
-        {"collection": "CMIP7", "model": "M1", "variable": "tas", "n_files": 5},
-        {"collection": "CMIP7", "model": "M1", "variable": "tas", "n_files": 7},
-        {"collection": "CMIP7", "model": "M1", "variable": "pr", "n_files": 2},
+        # two overlapping runs of the same model/variable: union = 1951-2014, not 64+30 years
+        {"collection": "CMIP7", "model": "M1", "variable": "tas", "frequency": "day",
+         "start": "1951-01", "end": "2014-12", "time_period": "1951-01–2014-12"},
+        {"collection": "CMIP7", "model": "M1", "variable": "tas", "frequency": "day",
+         "start": "1981-01", "end": "2010-12", "time_period": "1981-01–2010-12"},
+        # disjoint scenario run is added on top
+        {"collection": "CMIP7", "model": "M1", "variable": "tas", "frequency": "day",
+         "start": "2015-01", "end": "2100-12", "time_period": "2015-01–2100-12"},
+        # legacy row without start/end columns
+        {"collection": "CMIP7", "model": "M1", "variable": "pr", "frequency": "day",
+         "time_period": "1959-01–1960-06"},
+        {"collection": "CMIP7", "model": "M1", "variable": "orog", "frequency": "fx",
+         "time_period": "fixed"},
+        {"collection": "CMIP7", "model": "M2", "variable": "orog", "frequency": "fx",
+         "time_period": "fixed"},
     ]
 
 
-def test_aggregate_files_metric():
-    result = aggregate(_local_rows(), "files")
-    labels, variables, score, annotate = result["?"]
+def test_union_months():
+    assert union_months([]) == 0
+    assert union_months([(0, 11), (6, 17)]) == 18
+    assert union_months([(0, 11), (12, 23)]) == 24  # adjacent intervals merge
+    assert union_months([(24, 35), (0, 11)]) == 24
+
+
+def test_aggregate_coverage_metric_uses_union_not_sum():
+    result = aggregate(_local_rows(), "coverage")
+    labels, variables, score, annotate = result["day"]
     assert labels == ["M1"]
     assert variables == ["pr", "tas"]
-    assert score[0, variables.index("tas")] == 12
-    assert score[0, variables.index("pr")] == 2
-    assert annotate[0, variables.index("tas")] == "12"
+    tas = variables.index("tas")
+    assert score[0, tas] == 150  # 1951-2100, overlap counted once
+    assert annotate[0, tas] == "150y (3)"
+    assert score[0, variables.index("pr")] == 1.5
+    assert annotate[0, variables.index("pr")] == "1.5y (1)"
+
+
+def test_aggregate_coverage_fixed_frequency_counts_datasets():
+    labels, variables, score, annotate = aggregate(_local_rows(), "coverage")["fx"]
+    assert labels == ["M1", "M2"]
+    assert score[0, 0] == 1 and annotate[0, 0] == "1"
+
+
+def test_row_interval():
+    assert row_interval({"start": "1950-01", "end": "1950-12"}) == (1950 * 12, 1950 * 12 + 11)
+    assert row_interval({"time_period": "fixed"}) is None
+    assert row_interval({}) is None
 
 
 def test_aggregate_status_metric():
@@ -66,6 +106,9 @@ def test_filter_downloaded_variables_keeps_missing_rows():
 
 def test_filter_downloaded_variables_local_catalogue():
     rows = [{"variable": "tas", "n_files": "5"}, {"variable": "pr", "n_files": "0"}]
+    assert [r["variable"] for r in filter_downloaded_variables(rows)] == ["tas"]
+    rows = [{"variable": "tas", "time_period": "1951-01–2014-12"},
+            {"variable": "pr", "time_period": "", "size_bytes": "0"}]
     assert [r["variable"] for r in filter_downloaded_variables(rows)] == ["tas"]
 
 

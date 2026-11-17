@@ -1,4 +1,10 @@
-from esgf_stac.local import LOCAL_COLUMNS, catalog_rows, parse_drs
+from esgf_stac.local import (
+    LOCAL_COLUMNS,
+    _extract_temporal_range_from_name,
+    catalog_rows,
+    parse_drs,
+    temporal_fields,
+)
 
 CORDEX_FILE = (
     "CORDEX-CMIP6/DD/EUR-12/CNRM-MF/ERA5/evaluation/r1i1p1f1/CNRM-ALADIN64E1/"
@@ -87,13 +93,20 @@ def test_catalog_rows_grouping():
     assert len(cordex) == 2  # two versions -> two leaf-dir rows
     by_leaf = {r["leaf_dir"]: r for r in cordex}
     v2026 = [r for r in cordex if r["leaf_dir"].endswith("v20260624")][0]
-    assert v2026["n_files"] == 2  # .part excluded
+    assert v2026["time_period"] == "1959-01–1969-12"
     assert v2026["size_bytes"] == 300
     assert v2026["variable"] == "zmla"
+    assert v2026["start"] == "1959-01" and v2026["end"] == "1969-12"
+    assert v2026["n_years"] == 11.0
+    assert v2026["version"] == "v20260624"
+    assert v2026["latest"] is True
+    v2025 = [r for r in cordex if r["leaf_dir"].endswith("v20250101")][0]
+    assert v2025["latest"] is False
     assert len(by_leaf) == 2
-    assert rows["CMIP7"][0]["n_files"] == 1
+    assert rows["CMIP7"][0]["time_period"] == "1850-01–2099-12"
     assert rows["CMIP7"][0]["size_bytes"] == 300
     assert rows["other"][0]["leaf_dir"] == "."  # stray.txt
+    assert rows["other"][0]["time_period"] == ""
     for r in cordex + rows["CMIP7"] + rows["other"]:
         assert set(r) == set(LOCAL_COLUMNS)
 
@@ -107,3 +120,23 @@ def test_catalog_rows_filters():
     assert set(only_model) == {"CORDEX-CMIP6"}
     none = catalog_rows(_sizes(), {"variable": "tas"})
     assert none == {}
+
+
+def test_extract_temporal_range_formats():
+    f = _extract_temporal_range_from_name
+    assert f("pr_mon_195901-196012.nc") == ("195901", "196012")
+    assert f("pr_day_19590101-19601231.nc") == ("195901", "196012")
+    assert f("tas_1hr_195101010030-195112312330.nc") == ("195101", "195112")
+    assert f("tas_6hr_1951010100-1951123118.nc") == ("195101", "195112")
+    assert f("tas_yr_1850-1859.nc") == ("185001", "185912")
+    assert f("orog_fx_EUR-12.nc") == (None, None)
+
+
+def test_temporal_fields_fixed_and_hourly():
+    fx = temporal_fields(["a/orog_EUR-12_fx.nc"], "fx")
+    assert fx["time_period"] == "fixed" and fx["n_years"] == ""
+    hr = temporal_fields(["a/tas_1hr_195101010030-195112312330.nc",
+                          "a/tas_1hr_195201010030-195212312330.nc",
+                          "a/tas_1hr_195301010030-195312312330.nc.part"], "1hr")
+    assert hr == {"time_period": "1951-01–1952-12", "start": "1951-01",
+                  "end": "1952-12", "n_years": 2.0}

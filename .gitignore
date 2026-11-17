@@ -17,4 +17,5 @@ __pycache__/
 /health.csv
 /out.json
 /all_catalogues.csv
+/docs/data/
 .~lock.*#

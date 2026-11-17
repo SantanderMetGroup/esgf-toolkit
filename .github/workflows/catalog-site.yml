@@ -1,0 +1,85 @@
+# Rebuild the catalogue on the HPC (self-hosted runner with Lustre access) and
+# publish docs/ to GitHub Pages. The JSON snapshot is built on the runner and
+# shipped as a Pages artifact - it is never committed to the repository.
+#
+# One-time setup (see README "Catalogue website"):
+#   - register a self-hosted runner on an HPC node that sees $ESGF, labels: self-hosted, hpc
+#   - repo variable ESGF_ROOT = absolute path of the download tree on Lustre
+#   - Settings -> Pages -> Source: "GitHub Actions"
+name: catalogue-site
+
+on:
+  schedule:
+    - cron: "17 5 * * *"        # daily, 05:17 UTC
+  workflow_dispatch:
+    inputs:
+      compare:
+        description: "Query ESGF for the watchlist comparison"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ["docs/**", "watchlist.toml", "src/**", ".github/workflows/catalog-site.yml"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: catalogue-site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: [self-hosted, hpc]
+    timeout-minutes: 240
+    env:
+      ESGF: ${{ vars.ESGF_ROOT }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Ensure pixi
+        run: |
+          if ! command -v pixi >/dev/null; then
+            curl -fsSL https://pixi.sh/install.sh | bash
+            echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install environment
+        run: pixi install --locked
+
+      - name: Check ESGF_ROOT
+        run: |
+          test -n "$ESGF" || { echo "::error::repo variable ESGF_ROOT is not set"; exit 1; }
+          test -d "$ESGF" || { echo "::error::$ESGF is not a directory on this runner"; exit 1; }
+
+      - name: Node health
+        continue-on-error: true   # the site still builds if probing fails
+        run: pixi run stac_health
+
+      - name: Local catalogue (scan $ESGF)
+        run: pixi run stac_catalog -- --csv-dir ./catalog
+
+      - name: Site snapshot
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.compare }}" = "false" ]; then
+            pixi run stac_site -- --no-compare
+          else
+            pixi run stac_site
+          fi
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest      # deploying needs no HPC access
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

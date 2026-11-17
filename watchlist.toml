@@ -1,0 +1,25 @@
+# Datasets whose completeness (local vs ESGF) is shown on the catalogue site.
+#
+# Each [[watch]] is one set of facet filters, same names and semantics as the
+# CLI flags: comma-separated values (or a TOML list) are OR-ed, different keys
+# are AND-ed. `collection` is required; `name` is the card title on the site
+# (defaults to the filter values). Allowed keys:
+#   collection, name, description, model, rcm_model, driving_model, experiment,
+#   variable, frequency, grid, member, domain, activity
+#
+# Keep entries focused: every watch is a STAC query on each site rebuild.
+
+[[watch]]
+name = "EUR-12 daily surface (core variables)"
+description = "Daily near-surface fields over Europe, all CORDEX-CMIP6 runs"
+collection = "CORDEX-CMIP6"
+domain = "EUR-12"
+frequency = "day"
+variable = ["tas", "tasmax", "tasmin", "hurs", "huss", "ps", "sfcWind"]
+
+[[watch]]
+name = "NAM-12 daily tas / hurs"
+collection = "CORDEX-CMIP6"
+domain = "NAM-12"
+frequency = "day"
+variable = "tas,hurs"
