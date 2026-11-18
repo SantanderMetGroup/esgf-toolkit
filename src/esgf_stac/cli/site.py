@@ -76,8 +76,9 @@ def main(argv=None):
                      help="Offline: take watchlist completeness from this stac_catalog --compare CSV")
     src.add_argument("--no-compare", action="store_true",
                      help="Skip the watchlist comparison (local holdings only)")
-    ap.add_argument("--max-items", type=int, default=20000,
-                    help="Max STAC items per watchlist entry (default: 20000, 0 = no limit)")
+    ap.add_argument("--max-items", type=int, default=0,
+                    help="Max STAC items per watchlist entry (default: 0 = no limit; "
+                         "a truncated watch is flagged on the site)")
     args = ap.parse_args(argv)
 
     if not glob.glob(os.path.join(args.csv_dir, "*.csv")):

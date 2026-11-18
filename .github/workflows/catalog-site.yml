@@ -3,8 +3,9 @@
 # shipped as a Pages artifact - it is never committed to the repository.
 #
 # One-time setup (see README "Catalogue website"):
-#   - register a self-hosted runner on an HPC node that sees $ESGF, labels: self-hosted, hpc
+#   - self-hosted runner on an HPC login node registered to THIS repo, label: hpc
 #   - repo variable ESGF_ROOT = absolute path of the download tree on Lustre
+#   - optional repo variable SLURM_PARTITION (default: meteo_long)
 #   - Settings -> Pages -> Source: "GitHub Actions"
 name: catalogue-site
 
@@ -19,7 +20,7 @@ on:
         default: true
   push:
     branches: [main]
-    paths: ["docs/**", "watchlist.toml", "src/**", ".github/workflows/catalog-site.yml"]
+    paths: ["docs/**", "watchlist.toml", "src/**", "scripts/hpc/**", ".github/workflows/catalog-site.yml"]
 
 permissions:
   contents: read
@@ -33,14 +34,21 @@ concurrency:
 jobs:
   build:
     runs-on: [self-hosted, hpc]
-    timeout-minutes: 240
+    timeout-minutes: 720
+    defaults:
+      run:
+        shell: bash -l {0}      # login shell: loads ~/.bashrc / modules / PATH like an interactive session
     env:
       ESGF: ${{ vars.ESGF_ROOT }}
+      SLURM_PARTITION: ${{ vars.SLURM_PARTITION || 'meteo_long' }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Ensure pixi
+      - name: Check environment
         run: |
+          test -n "$ESGF" || { echo "::error::repo variable ESGF_ROOT is not set"; exit 1; }
+          test -d "$ESGF" || { echo "::error::$ESGF is not a directory on this runner"; exit 1; }
+          command -v sbatch >/dev/null || { echo "::error::sbatch not found (is this the HPC login node?)"; exit 1; }
           if ! command -v pixi >/dev/null; then
             curl -fsSL https://pixi.sh/install.sh | bash
             echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
@@ -49,17 +57,21 @@ jobs:
       - name: Install environment
         run: pixi install --locked
 
-      - name: Check ESGF_ROOT
-        run: |
-          test -n "$ESGF" || { echo "::error::repo variable ESGF_ROOT is not set"; exit 1; }
-          test -d "$ESGF" || { echo "::error::$ESGF is not a directory on this runner"; exit 1; }
-
       - name: Node health
         continue-on-error: true   # the site still builds if probing fails
         run: pixi run stac_health
 
-      - name: Local catalogue (scan $ESGF)
-        run: pixi run stac_catalog -- --csv-dir ./catalog
+      - name: Local catalogue (SLURM job scanning $ESGF)
+        run: |
+          mkdir -p logs
+          name="esgf-toolkit-catalog-${GITHUB_RUN_ID}"
+          # If the workflow is cancelled, cancel the SLURM job too.
+          trap 'scancel --name="$name" 2>/dev/null || true' INT TERM
+          status=0
+          sbatch --wait --job-name="$name" -p "$SLURM_PARTITION" --export=ALL \
+            scripts/hpc/catalog_job.sh || status=$?
+          cat logs/catalog-*.out 2>/dev/null || true
+          exit $status
 
       - name: Site snapshot
         run: |

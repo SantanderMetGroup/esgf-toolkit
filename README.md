@@ -208,21 +208,25 @@ Each entry costs one STAC query per rebuild, so keep the list focused. The full
 
 ### Publishing from the HPC
 
-`.github/workflows/catalog-site.yml` runs on a **self-hosted runner on the HPC**
-(daily, on demand, and on pushes touching the site): `stac_health` →
-`stac_catalog` (scans `$ESGF`) → `stac_site` → upload `docs/` as a Pages artifact.
-The deploy step itself runs on a GitHub-hosted runner. The snapshot is never committed.
+`.github/workflows/catalog-site.yml` runs on a **self-hosted runner on an HPC
+login node** (daily at 05:17 UTC, on demand, and on pushes touching the site):
+`stac_health` → `stac_catalog` submitted as a SLURM job
+(`scripts/hpc/catalog_job.sh`, `sbatch --wait`, log in `logs/`) → `stac_site`
+(on the login node, which has internet access) → upload `docs/` as a Pages
+artifact. The deploy step runs on a GitHub-hosted runner. The snapshot is never committed.
 
 One-time setup:
 
-1. On a node with Lustre access and outbound HTTPS (login/service node, not a
-   compute node), register a runner: *Settings → Actions → Runners → New
-   self-hosted runner*, and add the label `hpc`. Run it as a service (or under
-   `tmux`/`screen` if the site forbids services).
-2. *Settings → Secrets and variables → Actions → Variables*: set `ESGF_ROOT`
-   to the absolute path of the download tree.
-3. *Settings → Pages → Source*: **GitHub Actions**.
-4. Trigger *Actions → catalogue-site → Run workflow*.
+1. **Runner** (on the HPC login node, its own folder; runners are per repo):
+   *Settings → Actions → Runners → New self-hosted runner* (Linux x64), run the
+   download commands it shows, then
+   `./config.sh --url https://github.com/SantanderMetGroup/esgf-toolkit --token <TOKEN> --labels hpc`
+   and keep `./run.sh` alive (tmux/screen, like other runners on the machine).
+2. **Variables** (*Settings → Secrets and variables → Actions → Variables*):
+   `ESGF_ROOT` = absolute path of the download tree; optionally
+   `SLURM_PARTITION` (default `meteo_long`).
+3. **Pages** (*Settings → Pages → Source*): **GitHub Actions**.
+4. **Run** *Actions → catalogue-site → Run workflow*.
 
 > **Visibility:** on a public repository (or a public Pages site), the snapshot
 > publishes dataset ids, local relative paths, sizes and node health. Use a

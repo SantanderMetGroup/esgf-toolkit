@@ -7,19 +7,16 @@
 #   collection, name, description, model, rcm_model, driving_model, experiment,
 #   variable, frequency, grid, member, domain, activity
 #
-# Keep entries focused: every watch is a STAC query on each site rebuild.
+# Every watch is a full STAC query on each site rebuild (CORDEX-CMIP6 ~32k items,
+# CMIP7 ~123k items), so add filters before adding more collections.
 
 [[watch]]
-name = "EUR-12 daily surface (core variables)"
-description = "Daily near-surface fields over Europe, all CORDEX-CMIP6 runs"
+name = "CORDEX-CMIP6 EUR-12"
+description = "All CORDEX-CMIP6 datasets over the EUR-12 domain"
 collection = "CORDEX-CMIP6"
 domain = "EUR-12"
-frequency = "day"
-variable = ["tas", "tasmax", "tasmin", "hurs", "huss", "ps", "sfcWind"]
 
 [[watch]]
-name = "NAM-12 daily tas / hurs"
-collection = "CORDEX-CMIP6"
-domain = "NAM-12"
-frequency = "day"
-variable = "tas,hurs"
+name = "CMIP7"
+description = "All CMIP7 datasets"
+collection = "CMIP7"

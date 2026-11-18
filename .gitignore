@@ -19,3 +19,4 @@ __pycache__/
 /all_catalogues.csv
 /docs/data/
 .~lock.*#
+/logs/
