@@ -170,7 +170,7 @@ dependencies) that reads a JSON snapshot written by `stac_site`:
 |---|---|
 | **Holdings** | one row per local dataset (newest version), every facet as a filter with live counts, period as start – end date, sort, CSV export of the filtered view |
 | **Coverage matrix** | choose rows/columns (GCM, RCM, GCM / RCM, variable, experiment, domain, …) and the cell value (years covered as a union, dataset count, size); click a cell to list its datasets |
-| **Watchlist vs ESGF** | per `watchlist.toml` entry: % complete and a complete / partial / missing bar, plus the table of incomplete datasets |
+| **Requests vs ESGF** | per `watchlist.toml` entry: % complete and a complete / partial / missing bar, plus the table of incomplete datasets |
 | **Node health** | last `stac_health` result |
 
 Filters and the active tab are kept in the URL, so a filtered view can be shared as a link.
