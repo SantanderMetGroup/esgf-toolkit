@@ -1,22 +1,56 @@
 # Datasets whose completeness (local vs ESGF) is shown on the catalogue site.
 #
-# Each [[watch]] is one set of facet filters, same names and semantics as the
-# CLI flags: comma-separated values (or a TOML list) are OR-ed, different keys
-# are AND-ed. `collection` is required; `name` is the card title on the site
-# (defaults to the filter values). Allowed keys:
-#   collection, name, description, model, rcm_model, driving_model, experiment,
-#   variable, frequency, grid, member, domain, activity
+# Each [[watch]] selects datasets of ONE collection. Facet keys use the same
+# names and semantics as the CLI flags (comma-separated values or a TOML list are
+# OR-ed, different keys are AND-ed):
+#   model, rcm_model, driving_model, experiment, grid, member, domain, activity
 #
-# Every watch is a full STAC query on each site rebuild (CORDEX-CMIP6 ~32k items,
-# CMIP7 ~123k items), so add filters before adding more collections.
+# Variables are listed explicitly in a [watch.variables] table, one line per
+# variable: the value is the temporal resolution (frequency), or a list of them:
+#
+#   [watch.variables]
+#   tas = "day"                  # tas, daily only
+#   hurs = ["1hr", "day"]        # hurs, hourly and daily
+#
+# Only the listed (variable, frequency) pairs are compared with ESGF - tas at
+# "1hr" is NOT included by `tas = "day"`. Frequencies are the ESGF names:
+# 1hr, 6hr, day, mon, fx, ...  `variables` replaces the plain `variable` /
+# `frequency` keys; a watch cannot use both.
+#
+# `name` is the card title on the site, `description` an optional subtitle.
+# Every watch is a STAC query on each site rebuild, so list only what you need.
 
 [[watch]]
 name = "CORDEX-CMIP6 EUR-12"
-description = "All CORDEX-CMIP6 datasets over the EUR-12 domain"
+description = "Variables downloaded so far, plus hourly precipitation"
 collection = "CORDEX-CMIP6"
 domain = "EUR-12"
 
+[watch.variables]
+# near-surface fields
+tas = ["1hr", "day"]
+tasmax = "day"
+tasmin = "day"
+hurs = ["1hr", "day"]
+huss = "day"
+ps = "day"
+sfcWind = ["1hr", "day"]
+# precipitation (not downloaded yet)
+pr = "1hr"
+# radiation, hourly
+rlds = "1hr"
+rlus = "1hr"
+rsds = "1hr"
+rsus = "1hr"
+# fixed fields
+orog = "fx"
+sftlf = "fx"
+
 [[watch]]
 name = "CMIP7"
-description = "All CMIP7 datasets"
+description = "Variables downloaded so far"
 collection = "CMIP7"
+
+[watch.variables]
+tas = "mon"
+psl = "6hr"

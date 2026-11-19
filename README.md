@@ -189,27 +189,40 @@ Browsers block `fetch()` on `file://` pages, so serve `docs/` over HTTP rather t
 
 ### Watchlist
 
-`watchlist.toml` lists the dataset groups to compare with ESGF. Each `[[watch]]` uses
-the same facet names as the CLI flags (`collection` required; `model`,
-`rcm_model`, `driving_model`, `experiment`, `variable`, `frequency`, `grid`,
-`member`, `domain`, `activity`; values comma-separated or a TOML list):
+`watchlist.toml` lists the dataset groups to compare with ESGF. Each `[[watch]]`
+needs a `collection`; the other facets use the CLI flag names (`model`,
+`rcm_model`, `driving_model`, `experiment`, `grid`, `member`, `domain`,
+`activity`; values comma-separated or a TOML list). **Variables are listed
+explicitly in a `[watch.variables]` table, variable = temporal resolution** (or a
+list of them):
 
 ```toml
 [[watch]]
-name = "EUR-12 daily surface"
+name = "CORDEX-CMIP6 EUR-12"
 collection = "CORDEX-CMIP6"
-domain = "EUR-12"          # sent to STAC as domain_id
-frequency = "day"
-variable = ["tas", "pr"]
+domain = "EUR-12"            # sent to STAC as domain_id
+
+[watch.variables]
+tas = ["1hr", "day"]         # hourly and daily
+tasmax = "day"               # daily only
+pr = "1hr"                   # hourly only
+orog = "fx"
 ```
+
+Only the listed (variable, frequency) pairs are compared: `tasmax = "day"` does not
+include hourly `tasmax`. Frequencies are the ESGF names (`1hr`, `6hr`, `day`,
+`mon`, `fx`, ...). `variables` replaces the plain `variable` / `frequency` keys; a
+watch cannot use both. A watch without `variables` selects every variable.
+Internally each distinct frequency becomes one STAC query, because STAC filters are
+ANDed (one query for `tas` + `pr` + `1hr` + `day` would also select `tas` at `1hr`).
 
 Each entry costs one STAC query per rebuild, so keep the list focused. The full
 `--compare` catalogue (tens of thousands of rows) is deliberately not published:
 `compare.json` lists only **partial and missing** datasets, at most `--max-rows`
 (default 10000) per watch, partial first. The completeness counts on the cards
 always cover every dataset, and a card says when its table is cut off - add
-filters to the watch to list them all. (CORDEX-CMIP6 has ~32k datasets on ESGF,
-CMIP7 ~123k; querying all of CMIP7 takes a few minutes.)
+filters to the watch to list them all. (A watch without `variables` is large: CORDEX-CMIP6 has
+~32k datasets on ESGF, CMIP7 ~127k, and querying all of CMIP7 takes minutes.)
 
 **GCM / RCM:** CORDEX rows show the driving model as *GCM* and the regional
 model as *RCM*; global collections such as CMIP7 only have a GCM.

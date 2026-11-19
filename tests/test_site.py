@@ -13,6 +13,7 @@ from esgf_stac.site import (
     row_matches_watch,
     split_models,
     stac_filters,
+    stac_queries,
     summarize_compare,
     with_period,
 )
@@ -176,3 +177,61 @@ def test_cmip7_rows_get_gcm_and_no_rcm():
     assert (row["gcm"], row["rcm"]) == ("CanESM5-1", "")
     assert (row["frequency"], row["variable"], row["start"], row["end"]) == ("mon", "tas", "1850-01", "2170-12")
     assert snap["meta.json"]["totals"]["gcms"] == 1 and snap["meta.json"]["totals"]["rcms"] == 0
+
+
+VARIABLES_TOML = """
+[[watch]]
+name = "EUR pairs"
+collection = "CORDEX-CMIP6"
+domain = "EUR-12"
+
+[watch.variables]
+tas = ["day", "1hr"]
+pr = "1hr"
+orog = "fx"
+"""
+
+
+def test_load_watchlist_variables_table(tmp_path):
+    p = tmp_path / "w.toml"
+    p.write_text(VARIABLES_TOML)
+    (w,) = load_watchlist(str(p))
+    assert w["variables"] == {"tas": ["1hr", "day"], "pr": ["1hr"], "orog": ["fx"]}
+    assert w["filters"] == {"domain": "EUR-12"}
+
+
+def test_stac_queries_one_per_frequency():
+    w = {"collection": "CORDEX-CMIP6", "filters": {"domain": "EUR-12"},
+         "variables": {"tas": ["1hr", "day"], "pr": ["1hr"], "orog": ["fx"]}}
+    assert stac_queries(w) == [
+        {"grid": "EUR-12", "variable": "tas,pr", "frequency": "1hr"},
+        {"grid": "EUR-12", "variable": "tas", "frequency": "day"},
+        {"grid": "EUR-12", "variable": "orog", "frequency": "fx"},
+    ]
+    plain = {"collection": "CMIP7", "filters": {"frequency": "mon"}}  # no variables table
+    assert stac_queries(plain) == [{"frequency": "mon"}]
+
+
+def test_row_matches_watch_variable_frequency_pairs():
+    w = {"collection": "CORDEX-CMIP6", "filters": {"domain": "EUR-12"},
+         "variables": {"tas": ["day"], "pr": ["1hr"]}}
+    base = {"collection": "CORDEX-CMIP6", "domain_id": "EUR-12"}
+    ok = [{"variable": "tas", "frequency": "day"}, {"variable_id": "pr", "frequency": "1hr"}]
+    no = [{"variable": "tas", "frequency": "1hr"},   # right variable, wrong frequency
+          {"variable": "pr", "frequency": "day"},
+          {"variable": "hurs", "frequency": "day"}]
+    assert all(row_matches_watch({**base, **r}, w) for r in ok)
+    assert not any(row_matches_watch({**base, **r}, w) for r in no)
+
+
+@pytest.mark.parametrize("body, msg", [
+    ('[[watch]]\ncollection = "X"\nvariable = "tas"\n[watch.variables]\ntas = "day"\n', "not both"),
+    ('[[watch]]\ncollection = "X"\nfrequency = "day"\n[watch.variables]\ntas = "day"\n', "not both"),
+    ('[[watch]]\ncollection = "X"\n[watch.variables]\ntas = []\n', "needs a frequency"),
+    ('[[watch]]\ncollection = "X"\nvariables = "tas"\n', "non-empty table"),
+])
+def test_load_watchlist_rejects_bad_variables(tmp_path, body, msg):
+    p = tmp_path / "w.toml"
+    p.write_text(body)
+    with pytest.raises(ValueError, match=msg):
+        load_watchlist(str(p))

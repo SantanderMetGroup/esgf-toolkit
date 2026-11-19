@@ -57,12 +57,32 @@ _NUMERIC = {"n_years", "size_gb", "files_local", "files_remote", "size_local_gb"
 
 # --------------------------------------------------------------------------- watchlist
 
-def load_watchlist(path: str) -> list:
-    """Read ``[[watch]]`` entries from a TOML file -> [{name, collection, filters}].
+def parse_variables(value, where: str) -> dict:
+    """``variables`` table -> {variable: [frequencies]} (sorted, de-duplicated).
 
-    Each entry needs a ``collection``; every other key from WATCH_KEYS is a
-    comma-separated string (or list) of values, exactly like the CLI flags.
-    A missing file means an empty watchlist.
+    TOML:  ``tas = "day"``  or  ``hurs = ["1hr", "day"]``  (a comma-separated
+    string works too). Every variable needs at least one frequency.
+    """
+    if not isinstance(value, dict) or not value:
+        raise ValueError(f"{where}: 'variables' must be a non-empty table such as "
+                         f"[watch.variables] with entries like tas = \"day\"")
+    out = {}
+    for var, freqs in value.items():
+        values = sorted(set(parse_filter_values(freqs)))
+        if not values:
+            raise ValueError(f"{where}: variable '{var}' needs a frequency (e.g. \"day\")")
+        out[str(var)] = values
+    return out
+
+
+def load_watchlist(path: str) -> list:
+    """Read ``[[watch]]`` entries from a TOML file.
+
+    Returns [{name, collection, description, filters, variables}]. Each entry needs a
+    ``collection``; every other key from WATCH_KEYS is a comma-separated string (or
+    list) of values, exactly like the CLI flags. ``variables`` is an explicit
+    {variable: frequency(ies)} table and replaces the ``variable``/``frequency``
+    keys (combining them would be ambiguous). A missing file means an empty watchlist.
     """
     if not path or not os.path.exists(path):
         return []
@@ -70,15 +90,23 @@ def load_watchlist(path: str) -> list:
         data = tomllib.load(f)
     out = []
     for i, entry in enumerate(data.get("watch", []), 1):
-        unknown = set(entry) - set(WATCH_KEYS) - {"name", "collection", "description"}
+        where = f"{path}: watch #{i}"
+        unknown = set(entry) - set(WATCH_KEYS) - {"name", "collection", "description", "variables"}
         if unknown:
-            raise ValueError(f"{path}: watch #{i} has unknown key(s): {', '.join(sorted(unknown))}")
+            raise ValueError(f"{where} has unknown key(s): {', '.join(sorted(unknown))}")
         if not entry.get("collection"):
-            raise ValueError(f"{path}: watch #{i} needs a 'collection'")
+            raise ValueError(f"{where} needs a 'collection'")
+        variables = {}
+        if "variables" in entry:
+            clash = {"variable", "frequency"} & set(entry)
+            if clash:
+                raise ValueError(f"{where}: use either 'variables' or {' / '.join(sorted(clash))}, not both")
+            variables = parse_variables(entry["variables"], where)
         filters = {k: ",".join(parse_filter_values(entry[k])) for k in WATCH_KEYS if entry.get(k)}
         name = entry.get("name") or " · ".join([entry["collection"], *filters.values()])
         out.append({"name": name, "collection": entry["collection"],
-                    "description": entry.get("description", ""), "filters": filters})
+                    "description": entry.get("description", ""), "filters": filters,
+                    "variables": variables})
     names = [w["name"] for w in out]
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
@@ -98,16 +126,43 @@ def stac_filters(watch: dict) -> dict:
     return f
 
 
+def stac_queries(watch: dict) -> list:
+    """STAC filter dicts that together select exactly this watch.
+
+    A plain watch is one query. With ``variables`` there is one query per distinct
+    frequency (variables sharing that frequency are OR-ed), because STAC filters
+    are ANDed: asking for variable=pr,tas and frequency=1hr,day in one query would
+    also select tas at 1hr when only tas at day was requested.
+    """
+    base = stac_filters(watch)
+    by_freq = {}
+    for var, freqs in (watch.get("variables") or {}).items():
+        for freq in freqs:
+            by_freq.setdefault(freq, []).append(var)
+    if not by_freq:
+        return [base]
+    return [{**base, "variable": ",".join(vs), "frequency": freq}
+            for freq, vs in sorted(by_freq.items())]
+
+
+def _row_values(row: dict, key: str) -> set:
+    values = set()
+    for col in _ROW_ALIASES.get(key, (key,)):
+        values.update(p.strip() for p in str(row.get(col) or "").split(",") if p.strip())
+    return values
+
+
 def row_matches_watch(row: dict, watch: dict) -> bool:
     """True when a catalogue/comparison row falls inside a watchlist entry."""
     if (row.get("collection") or "") != watch["collection"]:
         return False
     for key, raw in watch["filters"].items():
-        wanted = set(parse_filter_values(raw))
-        have = set()
-        for col in _ROW_ALIASES.get(key, (key,)):
-            have.update(p.strip() for p in str(row.get(col) or "").split(",") if p.strip())
-        if not have & wanted:
+        if not _row_values(row, key) & set(parse_filter_values(raw)):
+            return False
+    pairs = watch.get("variables")
+    if pairs:  # explicit (variable, frequency) pairs
+        freqs = _row_values(row, "frequency")
+        if not any(f in pairs.get(v, ()) for v in _row_values(row, "variable") for f in freqs):
             return False
     return True
 

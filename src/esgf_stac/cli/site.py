@@ -24,7 +24,7 @@ from esgf_stac.site import (
     load_watchlist,
     read_health_rows,
     row_matches_watch,
-    stac_filters,
+    stac_queries,
     summarize_compare,
     write_snapshot,
 )
@@ -53,16 +53,20 @@ def compare_from_stac(watchlist: list, args) -> tuple[dict, dict]:
     sizes, base = scan_local(args.out) if os.path.isdir(args.out) else ({}, {})
     results, errors = {}, {}
     for w in watchlist:
-        seen = 0
+        seen, truncated = 0, False
 
         def rows(w=w):
-            nonlocal seen
-            for item in iter_items(node, w["collection"], stac_filters(w), max_items=args.max_items):
-                seen += 1
-                if seen % 10000 == 0:
-                    print(f"  {w['name']}: {seen} items...", flush=True)
-                if r := fmt_row(item, args.out, sizes, base, statuses, show_missing_only=False):
-                    yield r
+            nonlocal seen, truncated
+            for query in stac_queries(w):  # one per frequency when the watch lists variables
+                n = 0
+                for item in iter_items(node, w["collection"], query, max_items=args.max_items):
+                    n += 1
+                    seen += 1
+                    if seen % 10000 == 0:
+                        print(f"  {w['name']}: {seen} items...", flush=True)
+                    if r := fmt_row(item, args.out, sizes, base, statuses, show_missing_only=False):
+                        yield r
+                truncated = truncated or bool(args.max_items and n >= args.max_items)
 
         try:
             results[w["name"]] = summarize_compare(rows(), w["name"], args.max_rows)
@@ -70,7 +74,7 @@ def compare_from_stac(watchlist: list, args) -> tuple[dict, dict]:
             errors[w["name"]] = f"{type(e).__name__}: {e}"
             print(f"  {w['name']}: STAC query failed ({errors[w['name']]})", file=sys.stderr)
             continue
-        if args.max_items and seen >= args.max_items:
+        if truncated:
             errors[w["name"]] = f"truncated at --max-items {args.max_items}"
         c = results[w["name"]]["counts"]
         print(f"  {w['name']}: {results[w['name']]['datasets']} dataset(s) "

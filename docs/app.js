@@ -419,7 +419,9 @@ function renderWatchCards() {
       el("h3", { text: w.name }),
       w.description && el("p", { class: "desc", text: w.description }),
       el("div", { class: "chips" }, el("span", { class: "chip", text: w.collection }),
-        Object.entries(w.filters).map(([k, v]) => el("span", { class: "chip", text: `${k}: ${v}` }))));
+        Object.entries(w.filters).map(([k, v]) => el("span", { class: "chip", text: `${k}: ${v}` })),
+        // explicit variable -> frequency pairs, e.g. "pr: 1hr", "tas: 1hr, day"
+        Object.entries(w.variables || {}).map(([v, f]) => el("span", { class: "chip", text: `${v}: ${f.join(", ")}` }))));
     if (!w.evaluated) {
       card.append(el("div", { class: "warn", text: `Not evaluated in this snapshot${w.error ? ` (${w.error})` : ""}.` }));
       return card;
