@@ -18,18 +18,23 @@ import tomllib
 
 from .cql import parse_filter_values
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
+
+# Max incomplete (partial + missing) datasets listed per watch. ESGF collections
+# are large (CMIP7 ~123k items); the counts always cover every dataset, only the
+# table is capped so the JSON stays small enough for a browser.
+MAX_COMPARE_ROWS = 10000
 
 # Columns exported for the holdings table (subset of local.LOCAL_COLUMNS).
 SITE_LOCAL_COLUMNS = [
-    "collection", "activity", "domain", "institution", "model", "driving_model",
+    "collection", "activity", "domain", "institution", "gcm", "rcm",
     "experiment", "member", "frequency", "variable", "version",
     "start", "end", "n_years", "size_gb", "leaf_dir",
 ]
 
 # Columns exported for the watchlist comparison table.
 SITE_COMPARE_COLUMNS = [
-    "watch", "collection", "domain", "model", "driving_model", "experiment", "member",
+    "watch", "collection", "domain", "gcm", "rcm", "experiment", "member",
     "frequency", "variable", "version", "start", "end", "status",
     "files_local", "files_remote", "size_local_gb", "size_remote_gb", "item_id",
 ]
@@ -135,6 +140,22 @@ def table(rows: list, columns: list) -> dict:
             "rows": [[_clean(c, r.get(c)) for c in columns] for r in rows]}
 
 
+def split_models(row: dict) -> tuple[str, str]:
+    """(gcm, rcm) of a catalogue or comparison row.
+
+    Regional collections (CORDEX) have a driving model - the GCM - and a regional
+    model (RCM). Global collections (CMIP7, ...) only have the model itself, which
+    is the GCM.
+    """
+    driving, model = row.get("driving_model") or "", row.get("model") or ""
+    return (driving, model) if driving else (model, "")
+
+
+def with_models(row: dict) -> dict:
+    gcm, rcm = split_models(row)
+    return {**row, "gcm": gcm, "rcm": rcm}
+
+
 _PERIOD_RE = re.compile(r"(\d{4})-(\d{2})\D+(\d{4})-(\d{2})")
 
 
@@ -170,8 +191,8 @@ def compare_site_row(row: dict, watch_name: str) -> dict:
         "watch": watch_name,
         "collection": row.get("collection", ""),
         "domain": row.get("domain_id") or row.get("grid_label") or row.get("domain") or "",
-        "model": row.get("model", ""),
-        "driving_model": row.get("driving_model", ""),
+        "gcm": split_models(row)[0],
+        "rcm": split_models(row)[1],
         "experiment": row.get("experiment", ""),
         "member": row.get("member", ""),
         "frequency": row.get("frequency", ""),
@@ -199,12 +220,33 @@ def read_health_rows(path: str) -> list:
 
 # --------------------------------------------------------------------------- snapshot
 
-def _status_counts(rows: list) -> dict:
-    counts = {"complete": 0, "partial": 0, "missing": 0}
+STATUSES = ("complete", "partial", "missing")
+
+
+def summarize_compare(rows, watch_name: str, max_rows: int = MAX_COMPARE_ROWS) -> dict:
+    """Stream comparison rows (STAC records) into one watch's snapshot summary.
+
+    ``rows`` may be a generator: each row is reduced to its compact site form at
+    once, so only the listed incomplete datasets stay in memory. Returns
+    {counts, datasets, rows, omitted}: counts cover every dataset, ``rows`` lists
+    up to ``max_rows`` incomplete ones (all partial first, then missing) and
+    ``omitted`` is how many incomplete datasets did not fit.
+    """
+    counts = dict.fromkeys(STATUSES, 0)
+    partial, missing = [], []
     for r in rows:
-        s = r.get("status")
-        counts[s if s in counts else "missing"] += 1
-    return counts
+        status = r.get("status") if r.get("status") in counts else "missing"
+        counts[status] += 1
+        if status == "complete":
+            continue
+        bucket = partial if status == "partial" else missing
+        if len(bucket) < max_rows:
+            bucket.append(compare_site_row({**r, "status": status}, watch_name))
+    kept = partial[:max_rows]
+    kept += missing[:max(0, max_rows - len(kept))]
+    incomplete = counts["partial"] + counts["missing"]
+    return {"counts": counts, "datasets": sum(counts.values()), "rows": kept,
+            "omitted": incomplete - len(kept)}
 
 
 def build_snapshot(local_rows: list, watchlist: list, compare_by_watch: dict,
@@ -212,23 +254,24 @@ def build_snapshot(local_rows: list, watchlist: list, compare_by_watch: dict,
                    generated_at: str | None = None) -> dict:
     """Assemble {"local.json": ..., "compare.json": ..., "meta.json": ...} payloads.
 
-    ``compare_by_watch`` maps watch name -> list of comparison rows (STAC records);
-    a watch absent from the mapping was not evaluated (offline / failed).
+    ``compare_by_watch`` maps watch name -> summarize_compare() result; a watch
+    absent from the mapping was not evaluated (offline / failed).
     """
     errors = errors or {}
-    latest = [with_period(r) for r in latest_local_rows(local_rows)]
-    compare_rows = [compare_site_row(r, name)
-                    for w in watchlist for name in [w["name"]]
-                    for r in compare_by_watch.get(name, [])]
+    latest = [with_models(with_period(r)) for r in latest_local_rows(local_rows)]
+    compare_rows = [row for w in watchlist
+                    for row in compare_by_watch.get(w["name"], {}).get("rows", [])]
     watches = []
     for w in watchlist:
-        rows = compare_by_watch.get(w["name"])
+        summary = compare_by_watch.get(w["name"])
         watches.append({
             **w,
-            "evaluated": rows is not None,
+            "evaluated": summary is not None,
             "error": errors.get(w["name"], ""),
-            "counts": _status_counts(rows or []),
-            "datasets": len(rows or []),
+            "counts": summary["counts"] if summary else dict.fromkeys(STATUSES, 0),
+            "datasets": summary["datasets"] if summary else 0,
+            "rows_listed": len(summary["rows"]) if summary else 0,
+            "rows_omitted": summary["omitted"] if summary else 0,
         })
     size_gb = sum(_num(r.get("size_gb")) or 0 for r in latest)
     meta = {
@@ -240,7 +283,8 @@ def build_snapshot(local_rows: list, watchlist: list, compare_by_watch: dict,
             "size_gb": round(size_gb, 3),
             "collections": sorted({r.get("collection") or "other" for r in latest}),
             "variables": len({r.get("variable") for r in latest if r.get("variable")}),
-            "models": len({r.get("model") for r in latest if r.get("model")}),
+            "gcms": len({r["gcm"] for r in latest if r["gcm"]}),
+            "rcms": len({r["rcm"] for r in latest if r["rcm"]}),
         },
         "health": {
             "timestamp": next((h["timestamp"] for h in health_rows if h.get("timestamp")), ""),

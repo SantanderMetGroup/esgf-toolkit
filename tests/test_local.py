@@ -54,6 +54,18 @@ def test_parse_drs_cmip7():
     assert f["variable"] == "zos"
 
 
+def test_parse_drs_cmip7_drs_specs_prefix():
+    """The real tree is mirrored under MIP-DRS7/, not MIP-DS7/."""
+    path = ("MIP-DRS7/CMIP7/C4MIP/CCCma/CanESM5-1/esm-flat10/r1i1p2f1/glb/mon/tas/"
+            "tavg-h2m-hxy-u/g120/v20190429/tas_mon_185001-217012.nc")
+    d = parse_drs(path)
+    assert d["collection"] == "CMIP7"
+    f = d["facets"]
+    assert (f["activity"], f["institution"], f["model"]) == ("C4MIP", "CCCma", "CanESM5-1")
+    assert (f["experiment"], f["member"], f["frequency"]) == ("esm-flat10", "r1i1p2f1", "mon")
+    assert (f["variable"], f["grid"]) == ("tas", "g120")
+
+
 def test_parse_drs_without_version_dir():
     path = "CORDEX-CMIP6/DD/EUR-12/CNRM-MF/ERA5/evaluation/r1i1p1f1/CNRM-ALADIN64E1/v1-r1/1hr/zmla/x.nc"
     d = parse_drs(path)

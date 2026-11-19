@@ -32,8 +32,8 @@
     <div class="filters" id="filters" aria-label="Filters"></div>
 
     <section class="panel" id="panel-holdings" role="tabpanel" aria-labelledby="tab-holdings">
-      <p class="panel-intro">One row per downloaded dataset (newest local version). The bar shows the
-        period covered on a shared time axis. Click a header to sort; use the filters above to narrow down.</p>
+      <p class="panel-intro">One row per downloaded dataset (newest local version). The period is the first and last
+        date covered by the downloaded files. Click a header to sort; use the filters above to narrow down.</p>
       <div class="table-wrap" id="holdings-table"></div>
     </section>
 
@@ -46,7 +46,7 @@
 
     <section class="panel" id="panel-watchlist" role="tabpanel" aria-labelledby="tab-watchlist" hidden>
       <p class="panel-intro">Selected dataset groups (defined in <code>watchlist.toml</code>) compared with what ESGF
-        publishes: <strong>complete</strong> = all files local, <strong>partial</strong> = some, <strong>missing</strong> = none.</p>
+        publishes: <strong>complete</strong> = all files local, <strong>partial</strong> = some, <strong>missing</strong> = none. The table lists only partial and missing datasets.</p>
       <div class="cards" id="watch-cards"></div>
       <div class="filters" id="watch-filters"></div>
       <div class="table-wrap" id="watch-table"></div>

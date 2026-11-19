@@ -86,7 +86,7 @@ for `stac_catalog`, `stac_plot` and `stac_download`.
 | `stac_download [--out $ESGF] [--jobs 4] [--dry-run] [--manifest m.csv]` | download with resume + verify | files under `--out`, manifest CSV |
 | `stac_catalog [--out $ESGF] [--csv-dir ./catalog] [--compare] [--csv ./catalog.csv] [--missing-only] [--show]` | local inventory (temporal period per leaf dir); `--compare`: completeness report vs STAC | `<collection>.csv` per collection; with `--compare` also printed report + `catalog.csv` |
 | `stac_plot [--csv-dir ./catalog] [--compare] [--csv ./catalog.csv] [--refresh] [--image ./catalog.png]` | local temporal-coverage heatmap (`--compare`: completeness) | `catalog.png` |
-| `stac_site [--csv-dir ./catalog] [--watchlist watchlist.toml] [--compare-csv catalog.csv \| --no-compare] [--site-data docs/data]` | website snapshot; watchlist entries compared with ESGF | `docs/data/{local,compare,meta}.json` |
+| `stac_site [--csv-dir ./catalog] [--watchlist watchlist.toml] [--compare-csv catalog.csv \| --no-compare] [--max-rows 10000] [--site-data docs/data]` | website snapshot; watchlist entries compared with ESGF | `docs/data/{local,compare,meta}.json` |
 
 Availability flags (`avail` column) come from `health.csv`:
 `ok` all replicas healthy · `down` all down · `warn` mixed · `?` unknown.
@@ -159,7 +159,7 @@ The local catalog scans your downloaded ESGF data tree (default `$ESGF` or `./es
 - Run `stac_catalog --show` to inspect what you have at a glance (temporal periods per dataset/version).
 - Use `stac_plot` after building catalogs to visualize coverage across models/variables and frequencies.
 - If a leaf directory contains multiple files spanning different time ranges, the catalog records the envelope (min start to max end).
-- The PNG is a quick offline overview; it necessarily collapses domain, driving model, experiment and member. For browsing the full catalogue use the website below.
+- The PNG is a quick offline overview; it necessarily collapses domain, GCM/RCM, experiment and member. For browsing the full catalogue use the website below.
 
 ## Catalogue website (GitHub Pages)
 
@@ -168,8 +168,8 @@ dependencies) that reads a JSON snapshot written by `stac_site`:
 
 | Tab | Shows |
 |---|---|
-| **Holdings** | one row per local dataset (newest version), every facet as a filter with live counts, period drawn on a shared time axis, sort, CSV export of the filtered view |
-| **Coverage matrix** | choose rows/columns (model, driving model / RCM, variable, experiment, domain, …) and the cell value (years covered as a union, dataset count, size); click a cell to list its datasets |
+| **Holdings** | one row per local dataset (newest version), every facet as a filter with live counts, period as start – end date, sort, CSV export of the filtered view |
+| **Coverage matrix** | choose rows/columns (GCM, RCM, GCM / RCM, variable, experiment, domain, …) and the cell value (years covered as a union, dataset count, size); click a cell to list its datasets |
 | **Watchlist vs ESGF** | per `watchlist.toml` entry: % complete and a complete / partial / missing bar, plus the table of incomplete datasets |
 | **Node health** | last `stac_health` result |
 
@@ -204,7 +204,15 @@ variable = ["tas", "pr"]
 ```
 
 Each entry costs one STAC query per rebuild, so keep the list focused. The full
-`--compare` catalogue (tens of thousands of rows) is deliberately not published.
+`--compare` catalogue (tens of thousands of rows) is deliberately not published:
+`compare.json` lists only **partial and missing** datasets, at most `--max-rows`
+(default 10000) per watch, partial first. The completeness counts on the cards
+always cover every dataset, and a card says when its table is cut off - add
+filters to the watch to list them all. (CORDEX-CMIP6 has ~32k datasets on ESGF,
+CMIP7 ~123k; querying all of CMIP7 takes a few minutes.)
+
+**GCM / RCM:** CORDEX rows show the driving model as *GCM* and the regional
+model as *RCM*; global collections such as CMIP7 only have a GCM.
 
 ### Publishing from the HPC
 

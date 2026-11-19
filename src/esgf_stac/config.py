@@ -46,7 +46,8 @@ CMIP6_TITLE_KEYS = [
 # Local DRS layouts: (leading path component, title keys, collection facet key).
 DRS_LAYOUTS = [
     ("CORDEX", CORDEX_TITLE_KEYS, "project_id"),
-    ("MIP-DS", CMIP7_TITLE_KEYS, "mip_era"),
+    ("MIP-DRS", CMIP7_TITLE_KEYS, "mip_era"),  # MIP-DRS7/CMIP7/... (drs_specs first)
+    ("MIP-DS", CMIP7_TITLE_KEYS, "mip_era"),   # older mirrors: MIP-DS7/CMIP7/...
     ("CMIP7", CMIP7_TITLE_KEYS, "mip_era"),
     ("CMIP6", CMIP6_TITLE_KEYS, "project_id"),
 ]

@@ -10,8 +10,12 @@
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/catalog-%j.out
 
-set -euo pipefail
+# Source the profile BEFORE enabling `set -u`: /etc/bashrc reads unset variables
+# (e.g. BASHRCSOURCED), and an unbound-variable error kills a non-interactive shell.
+set -eo pipefail
 source ~/.bashrc || true
+export PATH="$HOME/.pixi/bin:$PATH"
+set -u
 cd "${SLURM_SUBMIT_DIR:-.}"
 
 : "${ESGF:?ESGF must point to the local download tree}"

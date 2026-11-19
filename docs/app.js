@@ -8,15 +8,16 @@
 
 const FILTER_FACETS = [
   ["collection", "Collection"], ["domain", "Domain"], ["frequency", "Frequency"],
-  ["experiment", "Experiment"], ["driving_model", "Driving model"], ["model", "Model (RCM)"],
+  ["experiment", "Experiment"], ["gcm", "GCM"], ["rcm", "RCM"],
   ["variable", "Variable"], ["member", "Member"],
 ];
 const MATRIX_FACETS = [
-  ["model", "Model (RCM)"], ["driving_model/model", "Driving model / RCM"],
-  ["driving_model", "Driving model"], ["variable", "Variable"], ["experiment", "Experiment"],
+  ["gcm", "GCM"], ["gcm/rcm", "GCM / RCM"], ["rcm", "RCM"],
+  ["variable", "Variable"], ["experiment", "Experiment"],
   ["domain", "Domain"], ["frequency", "Frequency"], ["member", "Member"], ["collection", "Collection"],
 ];
 const PAGE_SIZE = 100;
+const NONE = "(none)";  // filter value meaning "this facet is empty"
 const STATUS_ORDER = ["complete", "partial", "missing"];
 const STATUS_LABEL = { complete: "complete", partial: "partial", missing: "missing", ok: "up", down: "down" };
 // Sequential blue ramp (dataviz reference); dark mode runs dark->light so "low" recedes into the surface.
@@ -30,7 +31,7 @@ const STATE = {
   q: "",
   sort: { key: "variable", dir: 1 },
   page: 0,
-  mrows: "model", mcols: "variable", mvalue: "years",
+  mrows: "gcm", mcols: "variable", mvalue: "years",
   wname: "", wstatus: "incomplete", wvar: "", wq: "",
   wsort: { key: "status", dir: 1 },
   wpage: 0,
@@ -69,7 +70,7 @@ function monthIndex(ym) {
 }
 
 function facetValue(row, facet) {
-  if (facet === "driving_model/model") return `${row.driving_model || "–"} / ${row.model || "–"}`;
+  if (facet === "gcm/rcm") return row.rcm ? `${row.gcm || "–"} / ${row.rcm}` : (row.gcm || "–");
   return row[facet] || "";
 }
 
@@ -180,7 +181,7 @@ function filteredLocal(except) {
   return DATA.local.filter((r) => {
     for (const [k, v] of Object.entries(STATE.filters)) {
       if (!v || k === except) continue;
-      if ((r[k] || "") !== v) return false;
+      if ((r[k] || "") !== (v === NONE ? "" : v)) return false;
     }
     if (q && !Object.values(r).some((v) => String(v ?? "").toLowerCase().includes(q))) return false;
     return true;
@@ -194,15 +195,16 @@ function renderFilters() {
   const controls = [];
   for (const [facet, label] of FILTER_FACETS) {
     const all = uniq(DATA.local.map((r) => r[facet] || "")).filter(Boolean);
-    if (all.length <= 1 && !STATE.filters[facet]) continue;
+    const hasEmpty = all.length > 0 && DATA.local.some((r) => !r[facet]);
+    if (all.length <= 1 && !hasEmpty && !STATE.filters[facet]) continue;
     // Faceted counts: rows matching every *other* active filter.
     const counts = {};
-    for (const r of filteredLocal(facet)) counts[r[facet] || ""] = (counts[r[facet] || ""] || 0) + 1;
+    for (const r of filteredLocal(facet)) counts[r[facet] || NONE] = (counts[r[facet] || NONE] || 0) + 1;
     const sel = el("select", {
       "aria-label": label,
       onchange: (e) => { STATE.filters[facet] = e.target.value; STATE.page = 0; render(); },
     }, el("option", { value: "", text: "All" }),
-    all.sort((a, b) => a.localeCompare(b, "en", { numeric: true }))
+    all.sort((a, b) => a.localeCompare(b, "en", { numeric: true })).concat(hasEmpty ? [NONE] : [])
       .map((v) => el("option", { value: v, text: `${v} (${counts[v] || 0})`, selected: STATE.filters[facet] === v })));
     controls.push(el("label", {}, label, sel));
   }
@@ -231,16 +233,10 @@ function refocus(key) {
 
 // ------------------------------------------------------------------ holdings table
 
-let TIME_AXIS = null;  // [firstMonth, lastMonth] over all local rows
-
-function timelineCell(row) {
-  const s = monthIndex(row.start), e = monthIndex(row.end);
-  if (s === null || e === null || !TIME_AXIS) {
-    return el("span", { class: "tl-text", text: row.frequency === "fx" ? "fixed (no time axis)" : "unknown period" });
-  }
-  const span = TIME_AXIS[1] - TIME_AXIS[0] + 1;
-  return el("div", { class: "tl", title: `${row.start} – ${row.end}` },
-    el("span", { style: { left: `${((s - TIME_AXIS[0]) / span) * 100}%`, width: `${Math.max(1, ((e - s + 1) / span) * 100)}%` } }));
+// "1951-01 – 2014-12"; fixed fields (fx) have no time axis.
+function periodText(row) {
+  if (row.start && row.end) return `${row.start} – ${row.end}`;
+  return row.frequency === "fx" ? "fixed" : "–";
 }
 
 function renderTable(container, { rows, columns, sort, page, onSort, onPage, csvName, empty }) {
@@ -277,19 +273,16 @@ function renderTable(container, { rows, columns, sort, page, onSort, onPage, csv
 
 function renderHoldings() {
   const multiColl = uniq(DATA.local.map((r) => r.collection)).length > 1;
-  const axis = TIME_AXIS
-    ? el("div", { class: "tl-axis" }, el("span", { text: Math.floor(TIME_AXIS[0] / 12) }), el("span", { text: "Period" }), el("span", { text: Math.floor(TIME_AXIS[1] / 12) }))
-    : "Period";
   const columns = [
     multiColl && { key: "collection", label: "Collection" },
     { key: "domain", label: "Domain" },
-    { key: "driving_model", label: "Driving model" },
-    { key: "model", label: "Model (RCM)" },
+    { key: "gcm", label: "GCM" },
+    { key: "rcm", label: "RCM" },
     { key: "experiment", label: "Experiment" },
     { key: "member", label: "Member" },
     { key: "frequency", label: "Freq." },
     { key: "variable", label: "Variable" },
-    { key: "period", sortKey: "start", header: axis, render: timelineCell, csvKeys: ["start", "end"] },
+    { key: "period", sortKey: "start", label: "Period", render: periodText, csvKeys: ["start", "end"] },
     { key: "n_years", label: "Years", cls: "num", render: (r) => (r.n_years == null ? "–" : fmtYears(r.n_years)) },
     { key: "size_gb", label: "Size", cls: "num", render: (r) => fmtGB(num(r.size_gb)) },
     { key: "version", label: "Version" },
@@ -386,10 +379,12 @@ function renderMatrix() {
 function drillDown(rowValue, colValue) {
   hideTooltip();
   for (const [facet, value] of [[STATE.mrows, rowValue], [STATE.mcols, colValue]]) {
-    if (facet === "driving_model/model") {
-      const [dm, m] = value.split(" / ");
-      STATE.filters.driving_model = dm === "–" ? "" : dm;
-      STATE.filters.model = m === "–" ? "" : m;
+    if (facet === "gcm/rcm") {
+      const [g, r] = value.split(" / ");
+      STATE.filters.gcm = g === "–" ? NONE : g;
+      STATE.filters.rcm = r || NONE;
+    } else if (value === "" || value === "–") {
+      STATE.filters[facet] = NONE;
     } else {
       STATE.filters[facet] = value;
     }
@@ -434,6 +429,8 @@ function renderWatchCards() {
       total ? statusStack(w.counts, total) : el("div", { class: "desc", text: "ESGF returned no datasets for these filters." }),
       el("div", { class: "stack-legend" }, STATUS_ORDER.map((s) => el("span", {}, statusBadge(s), ` ${fmtInt(w.counts[s])}`))),
       w.error && el("div", { class: "warn", text: w.error }),
+      w.rows_omitted > 0 && el("div", { class: "desc", style: { marginTop: "8px" },
+        text: `The table lists ${fmtInt(w.rows_listed)} of ${fmtInt(w.rows_listed + w.rows_omitted)} incomplete datasets (partial first). Add filters to this watch in watchlist.toml to list them all.` }),
       el("button", { class: "btn", type: "button", style: { marginTop: "10px" }, text: "Show incomplete datasets",
         onclick: () => { STATE.wname = w.name; STATE.wstatus = "incomplete"; STATE.wpage = 0; render(); $("watch-table").scrollIntoView({ behavior: "smooth" }); } }));
     return card;
@@ -466,7 +463,7 @@ function renderWatchlist() {
   wsearch.dataset.focus = "wsearch";
   $("watch-filters").replaceChildren(
     sel("Watch", STATE.wname, [["", "All watches"], ...watches.map((w) => [w, w])], (v) => { STATE.wname = v; STATE.wvar = ""; }),
-    sel("Status", STATE.wstatus, [["incomplete", "Partial + missing"], ["all", "All"], ["complete", "Complete"], ["partial", "Partial"], ["missing", "Missing"]], (v) => { STATE.wstatus = v; }),
+    sel("Status", STATE.wstatus, [["incomplete", "Partial + missing"], ["partial", "Partial"], ["missing", "Missing"]], (v) => { STATE.wstatus = v; }),
     sel("Variable", STATE.wvar, [["", "All"], ...vars.map((v) => [v, v])], (v) => { STATE.wvar = v; }),
     el("label", {}, "Search", wsearch),
     el("span", { class: "count", text: `${fmtInt(rows.length)} dataset(s)` }));
@@ -474,13 +471,13 @@ function renderWatchlist() {
     !STATE.wname && watches.length > 1 && { key: "watch", label: "Watch" },
     { key: "status", label: "Status", render: (r) => statusBadge(r.status) },
     { key: "domain", label: "Domain" },
-    { key: "driving_model", label: "Driving model" },
-    { key: "model", label: "Model (RCM)" },
+    { key: "gcm", label: "GCM" },
+    { key: "rcm", label: "RCM" },
     { key: "experiment", label: "Experiment" },
     { key: "member", label: "Member" },
     { key: "frequency", label: "Freq." },
     { key: "variable", label: "Variable" },
-    { key: "period", sortKey: "start", label: "Period (ESGF)", render: (r) => (r.start ? `${r.start} – ${r.end}` : "–"), csvKeys: ["start", "end"] },
+    { key: "period", sortKey: "start", label: "Period (ESGF)", render: periodText, csvKeys: ["start", "end"] },
     { key: "files", sortKey: "files_local", label: "Files local/ESGF", cls: "num", render: (r) => `${fmtInt(num(r.files_local))} / ${fmtInt(num(r.files_remote))}`, csvKeys: ["files_local", "files_remote"] },
     { key: "size", sortKey: "size_remote_gb", label: "Size local/ESGF", cls: "num", render: (r) => `${fmtGB(num(r.size_local_gb))} / ${fmtGB(num(r.size_remote_gb))}`, csvKeys: ["size_local_gb", "size_remote_gb"] },
     { key: "version", label: "Version" },
@@ -525,14 +522,15 @@ function renderTiles() {
   const nodesUp = h.up + h.down
     ? el("span", { class: `status ${h.down ? "st-warn" : "st-ok"}` }, el("i", { text: `${h.up}/${h.up + h.down}` }))
     : "–";
-  $("tiles").replaceChildren(
+  $("tiles").replaceChildren(...[
     tile("Datasets on disk", fmtInt(t.datasets), t.older_versions ? `+ ${fmtInt(t.older_versions)} older version(s)` : t.collections.join(", ")),
     tile("Total size", fmtGB(t.size_gb), "newest versions only"),
-    tile("Models", fmtInt(t.models)),
+    tile("GCMs", fmtInt(t.gcms)),
+    t.rcms ? tile("RCMs", fmtInt(t.rcms)) : null,
     tile("Variables", fmtInt(t.variables)),
     tile("Watchlist complete", wTotal ? `${Math.round((wDone / wTotal) * 100)}%` : "–", wTotal ? `${fmtInt(wDone)} of ${fmtInt(wTotal)} ESGF datasets` : "no watchlist data"),
     tile("Nodes reachable", nodesUp, h.down ? `${h.down} down` : h.up ? "all up" : "no health data"),
-  );
+  ].filter(Boolean));
 }
 
 function setTab(tab) {
@@ -596,9 +594,6 @@ async function load() {
     document.querySelector("nav.tabs").hidden = true;
     return;
   }
-  const starts = DATA.local.map((r) => monthIndex(r.start)).filter((x) => x !== null);
-  const ends = DATA.local.map((r) => monthIndex(r.end)).filter((x) => x !== null);
-  if (starts.length) TIME_AXIS = [Math.min(...starts) - (Math.min(...starts) % 12), Math.max(...ends) + 11 - (Math.max(...ends) % 12)];
   const when = new Date(DATA.meta.generated_at);
   $("generated").textContent = `Snapshot ${isNaN(when) ? DATA.meta.generated_at : when.toISOString().slice(0, 16).replace("T", " ")} UTC`;
   readHash();

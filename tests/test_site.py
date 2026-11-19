@@ -11,7 +11,9 @@ from esgf_stac.site import (
     build_snapshot,
     load_watchlist,
     row_matches_watch,
+    split_models,
     stac_filters,
+    summarize_compare,
     with_period,
 )
 
@@ -79,6 +81,26 @@ def test_row_matches_watch_uses_aliases():
     assert not row_matches_watch({**rows[0], "collection": "CMIP7"}, w)
 
 
+def test_split_models_cordex_and_global():
+    assert split_models({"driving_model": "MPI-ESM1-2-HR", "model": "ICON-CLM"}) == ("MPI-ESM1-2-HR", "ICON-CLM")
+    assert split_models({"driving_model": "", "model": "CanESM5-1"}) == ("CanESM5-1", "")  # CMIP7
+    assert split_models({}) == ("", "")
+
+
+def test_summarize_compare_counts_everything_but_caps_rows():
+    rows = ([{"status": "complete"}] * 5
+            + [{"status": "partial", "item_id": f"p{i}"} for i in range(3)]
+            + [{"status": "missing", "item_id": f"m{i}"} for i in range(10)])
+    s = summarize_compare(iter(rows), "w", max_rows=6)  # a generator is accepted
+    assert s["counts"] == {"complete": 5, "partial": 3, "missing": 10}
+    assert s["datasets"] == 18
+    assert len(s["rows"]) == 6 and s["omitted"] == 7
+    assert [r["status"] for r in s["rows"]] == ["partial"] * 3 + ["missing"] * 3  # partial first
+    assert all(r["watch"] == "w" for r in s["rows"])
+    full = summarize_compare(rows, "w")
+    assert len(full["rows"]) == 13 and full["omitted"] == 0  # complete rows are never listed
+
+
 def test_with_period_fills_legacy_rows():
     assert with_period({"time_period": "1951-01–2014-12"})["n_years"] == 64.0
     assert with_period({"time_period": "fixed"}) == {"time_period": "fixed"}
@@ -91,7 +113,7 @@ def test_build_snapshot_shapes():
     watch = [{"name": "EUR daily", "collection": "CORDEX-CMIP6", "description": "",
               "filters": {"domain": "EUR-12"}},
              {"name": "offline", "collection": "CMIP7", "description": "", "filters": {}}]
-    compare = {"EUR daily": _compare_rows()[:3]}
+    compare = {"EUR daily": summarize_compare(_compare_rows()[:3], "EUR daily")}
     health = [{"timestamp": "t", "kind": "fs", "name": "h1", "status": "ok", "detail": ""},
               {"timestamp": "t", "kind": "fs", "name": "h2", "status": "down", "detail": ""}]
     snap = build_snapshot(local, watch, compare, health, generated_at="2026-01-01T00:00:00Z")
@@ -104,6 +126,7 @@ def test_build_snapshot_shapes():
     assert meta["health"]["up"] == 1 and meta["health"]["down"] == 1
     eur, off = meta["watchlist"]
     assert eur["evaluated"] and eur["counts"] == {"complete": 1, "partial": 1, "missing": 1}
+    assert eur["datasets"] == 3 and eur["rows_listed"] == 2 and eur["rows_omitted"] == 0
     assert not off["evaluated"] and off["datasets"] == 0
 
     ct = snap["compare.json"]
@@ -112,6 +135,8 @@ def test_build_snapshot_shapes():
     pr = next(r for r in rows if r["variable"] == "pr")
     assert pr["files_local"] == 3 and pr["size_remote_gb"] == 1.4  # CSV strings -> numbers
     assert pr["domain"] == "EUR-12" and pr["start"] == "1950-01" and pr["watch"] == "EUR daily"
+    assert (pr["gcm"], pr["rcm"]) == ("D1", "M1")
+    assert {r["variable"] for r in rows} == {"pr", "hurs"}  # complete datasets are not listed
     json.dumps(snap)  # serialisable
 
 
@@ -138,3 +163,16 @@ def test_main_offline_writes_snapshot(tmp_path, monkeypatch):
     local = json.loads((out / "local.json").read_text())
     tl = dict(zip(local["columns"], next(r for r in local["rows"] if r[0] == "CMIP7")))
     assert tl["start"] == "1850-01" and tl["n_years"] == 250
+
+
+def test_cmip7_rows_get_gcm_and_no_rcm():
+    cmip7 = ("MIP-DRS7/CMIP7/C4MIP/CCCma/CanESM5-1/esm-flat10/r1i1p2f1/glb/mon/tas/"
+             "tavg-h2m-hxy-u/g120/v20190429/tas_mon_185001-217012.nc")
+    local = [r for rows in catalog_rows({cmip7: 10}).values() for r in rows]
+    snap = build_snapshot(local, [], {}, [])
+    lt = snap["local.json"]
+    row = dict(zip(lt["columns"], lt["rows"][0]))
+    assert row["collection"] == "CMIP7"
+    assert (row["gcm"], row["rcm"]) == ("CanESM5-1", "")
+    assert (row["frequency"], row["variable"], row["start"], row["end"]) == ("mon", "tas", "1850-01", "2170-12")
+    assert snap["meta.json"]["totals"]["gcms"] == 1 and snap["meta.json"]["totals"]["rcms"] == 0

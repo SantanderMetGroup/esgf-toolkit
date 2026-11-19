@@ -149,7 +149,7 @@ def parse_drs(relpath: str) -> dict:
                 break
     if raw.get(coll_key):
         collection = raw[coll_key]
-    elif keys and head.startswith("MIP-DS") and len(parts) > 1:
+    elif keys and head.startswith(("MIP-DRS", "MIP-DS")) and len(parts) > 1:
         collection = parts[1]
     else:
         collection = head

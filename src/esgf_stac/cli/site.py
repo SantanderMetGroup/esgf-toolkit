@@ -19,11 +19,13 @@ from esgf_stac.cli.common import add_health_arg, add_node_arg, add_out_arg
 from esgf_stac.cli.plot import read_csv_rows, read_local_rows
 from esgf_stac.local import scan_local
 from esgf_stac.site import (
+    MAX_COMPARE_ROWS,
     build_snapshot,
     load_watchlist,
     read_health_rows,
     row_matches_watch,
     stac_filters,
+    summarize_compare,
     write_snapshot,
 )
 
@@ -31,32 +33,48 @@ DEFAULT_SITE_DATA = "./docs/data"
 DEFAULT_WATCHLIST = "./watchlist.toml"
 
 
-def compare_from_csv(watchlist: list, csv_path: str) -> dict:
-    """Offline: select each watch's rows from an existing stac_catalog --compare CSV."""
+def compare_from_csv(watchlist: list, csv_path: str, max_rows: int) -> dict:
+    """Offline: summarize each watch from an existing stac_catalog --compare CSV."""
     rows = read_csv_rows(csv_path)
-    return {w["name"]: [r for r in rows if row_matches_watch(r, w)] for w in watchlist}
+    return {w["name"]: summarize_compare((r for r in rows if row_matches_watch(r, w)),
+                                         w["name"], max_rows)
+            for w in watchlist}
 
 
 def compare_from_stac(watchlist: list, args) -> tuple[dict, dict]:
-    """Query STAC for each watch and compare against the local tree (scanned once)."""
+    """Query STAC for each watch and compare against the local tree (scanned once).
+
+    Items are streamed (a watch can match >100k datasets) and reduced to a summary
+    as they arrive.
+    """
     node = NODES[args.node]
     _, statuses = load_health(args.health)
     print(f"Scanning {args.out} for the watchlist comparison...")
     sizes, base = scan_local(args.out) if os.path.isdir(args.out) else ({}, {})
     results, errors = {}, {}
     for w in watchlist:
+        seen = 0
+
+        def rows(w=w):
+            nonlocal seen
+            for item in iter_items(node, w["collection"], stac_filters(w), max_items=args.max_items):
+                seen += 1
+                if seen % 10000 == 0:
+                    print(f"  {w['name']}: {seen} items...", flush=True)
+                if r := fmt_row(item, args.out, sizes, base, statuses, show_missing_only=False):
+                    yield r
+
         try:
-            items = iter_items(node, w["collection"], stac_filters(w), max_items=args.max_items)
-            rows = [r for item in items
-                    if (r := fmt_row(item, args.out, sizes, base, statuses, show_missing_only=False))]
+            results[w["name"]] = summarize_compare(rows(), w["name"], args.max_rows)
         except requests.exceptions.RequestException as e:
             errors[w["name"]] = f"{type(e).__name__}: {e}"
             print(f"  {w['name']}: STAC query failed ({errors[w['name']]})", file=sys.stderr)
             continue
-        results[w["name"]] = rows
-        if args.max_items and len(rows) >= args.max_items:
+        if args.max_items and seen >= args.max_items:
             errors[w["name"]] = f"truncated at --max-items {args.max_items}"
-        print(f"  {w['name']}: {len(rows)} dataset(s)")
+        c = results[w["name"]]["counts"]
+        print(f"  {w['name']}: {results[w['name']]['datasets']} dataset(s) "
+              f"({c['complete']} complete, {c['partial']} partial, {c['missing']} missing)")
     return results, errors
 
 
@@ -79,6 +97,9 @@ def main(argv=None):
     ap.add_argument("--max-items", type=int, default=0,
                     help="Max STAC items per watchlist entry (default: 0 = no limit; "
                          "a truncated watch is flagged on the site)")
+    ap.add_argument("--max-rows", type=int, default=MAX_COMPARE_ROWS,
+                    help=f"Max incomplete datasets listed per watch in compare.json "
+                         f"(default: {MAX_COMPARE_ROWS}; the counts always cover all)")
     args = ap.parse_args(argv)
 
     if not glob.glob(os.path.join(args.csv_dir, "*.csv")):
@@ -95,7 +116,7 @@ def main(argv=None):
     if args.no_compare or not watchlist:
         compare = {}
     elif args.compare_csv:
-        compare = compare_from_csv(watchlist, args.compare_csv)
+        compare = compare_from_csv(watchlist, args.compare_csv, args.max_rows)
     else:
         compare, errors = compare_from_stac(watchlist, args)
 

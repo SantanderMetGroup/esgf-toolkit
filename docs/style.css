@@ -127,12 +127,6 @@ table.data td.path { max-width: 260px; overflow: hidden; text-overflow: ellipsis
 .pager { display: flex; gap: 8px; align-items: center; padding: 8px 10px; color: var(--text-secondary); }
 .pager .spacer { flex: 1; }
 
-/* timeline bar in the holdings table */
-.tl { position: relative; width: 180px; height: 10px; background: var(--series-1-track); border-radius: 2px; }
-.tl > span { position: absolute; top: 0; bottom: 0; background: var(--series-1); border-radius: 2px; }
-.tl-axis { display: flex; justify-content: space-between; width: 180px; font-weight: 400; color: var(--text-muted); }
-.tl-text { color: var(--text-secondary); font-size: 12px; }
-
 /* coverage matrix */
 .matrix-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; overflow: auto; }
 .matrix { display: grid; gap: 2px; width: max-content; }
