@@ -14,8 +14,10 @@
   start – end, watchlist table limited to partial/missing datasets and capped
   per watch (`--max-rows`) so CMIP7-sized watches stay small.
 - Watchlist: explicit `[watch.variables]` table (`tas = ["1hr", "day"]`,
-  `pr = "1hr"`) selecting (variable, frequency) pairs; default watchlist now
-  lists the variables downloaded so far plus CORDEX-CMIP6 hourly `pr`.
+  `pr = "1hr"`) selecting (variable, frequency) pairs, with optional per-frequency
+  scenarios (`tas = { day = "all", "1hr" = "evaluation" }`; none = every
+  scenario); default watchlist now lists the variables downloaded so far plus
+  CORDEX-CMIP6 hourly `pr`, hourly limited to `evaluation`.
 - `scripts/hpc/catalog_job.sh`: source the profile before `set -u`
   (`BASHRCSOURCED: unbound variable` aborted the SLURM job).
 - `stac_plot`: local cells show years covered by the union of datasets

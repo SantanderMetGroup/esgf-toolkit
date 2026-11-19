@@ -196,13 +196,13 @@ def test_load_watchlist_variables_table(tmp_path):
     p = tmp_path / "w.toml"
     p.write_text(VARIABLES_TOML)
     (w,) = load_watchlist(str(p))
-    assert w["variables"] == {"tas": ["1hr", "day"], "pr": ["1hr"], "orog": ["fx"]}
+    assert w["variables"] == {"tas": {"1hr": [], "day": []}, "pr": {"1hr": []}, "orog": {"fx": []}}
     assert w["filters"] == {"domain": "EUR-12"}
 
 
 def test_stac_queries_one_per_frequency():
     w = {"collection": "CORDEX-CMIP6", "filters": {"domain": "EUR-12"},
-         "variables": {"tas": ["1hr", "day"], "pr": ["1hr"], "orog": ["fx"]}}
+         "variables": {"tas": {"1hr": [], "day": []}, "pr": {"1hr": []}, "orog": {"fx": []}}}
     assert stac_queries(w) == [
         {"grid": "EUR-12", "variable": "tas,pr", "frequency": "1hr"},
         {"grid": "EUR-12", "variable": "tas", "frequency": "day"},
@@ -214,7 +214,7 @@ def test_stac_queries_one_per_frequency():
 
 def test_row_matches_watch_variable_frequency_pairs():
     w = {"collection": "CORDEX-CMIP6", "filters": {"domain": "EUR-12"},
-         "variables": {"tas": ["day"], "pr": ["1hr"]}}
+         "variables": {"tas": {"day": []}, "pr": {"1hr": []}}}
     base = {"collection": "CORDEX-CMIP6", "domain_id": "EUR-12"}
     ok = [{"variable": "tas", "frequency": "day"}, {"variable_id": "pr", "frequency": "1hr"}]
     no = [{"variable": "tas", "frequency": "1hr"},   # right variable, wrong frequency
@@ -231,6 +231,70 @@ def test_row_matches_watch_variable_frequency_pairs():
     ('[[watch]]\ncollection = "X"\nvariables = "tas"\n', "non-empty table"),
 ])
 def test_load_watchlist_rejects_bad_variables(tmp_path, body, msg):
+    p = tmp_path / "w.toml"
+    p.write_text(body)
+    with pytest.raises(ValueError, match=msg):
+        load_watchlist(str(p))
+
+
+SCENARIO_TOML = """
+[[watch]]
+name = "scenarios"
+collection = "CORDEX-CMIP6"
+domain = "EUR-12"
+
+[watch.variables]
+tasmax = "day"
+tas = { day = "all", "1hr" = "evaluation" }
+pr = { "1hr" = ["historical", "evaluation"] }
+"""
+
+
+def test_variables_with_scenarios(tmp_path):
+    p = tmp_path / "w.toml"
+    p.write_text(SCENARIO_TOML)
+    (w,) = load_watchlist(str(p))
+    assert w["variables"] == {"tasmax": {"day": []},
+                              "tas": {"day": [], "1hr": ["evaluation"]},
+                              "pr": {"1hr": ["evaluation", "historical"]}}  # "all" -> [], lists sorted
+
+
+def test_stac_queries_split_by_scenarios():
+    w = {"collection": "CORDEX-CMIP6", "filters": {"domain": "EUR-12"},
+         "variables": {"tasmax": {"day": []}, "tas": {"day": [], "1hr": ["evaluation"]},
+                       "pr": {"1hr": ["evaluation"]}}}
+    assert stac_queries(w) == [
+        # hourly evaluation: tas + pr share one query; no experiment filter for daily
+        {"grid": "EUR-12", "variable": "tas,pr", "frequency": "1hr", "experiment": "evaluation"},
+        {"grid": "EUR-12", "variable": "tasmax,tas", "frequency": "day"},
+    ]
+
+
+def test_watch_level_experiment_is_anded_with_pair_scenarios():
+    w = {"collection": "C", "filters": {"experiment": "historical,ssp370"},
+         "variables": {"tas": {"day": [], "1hr": ["ssp370", "evaluation"]}}}
+    assert stac_queries(w) == [
+        {"experiment": "ssp370", "variable": "tas", "frequency": "1hr"},
+        {"experiment": "historical,ssp370", "variable": "tas", "frequency": "day"},
+    ]
+
+
+def test_row_matches_watch_with_scenarios():
+    w = {"collection": "CORDEX-CMIP6", "filters": {},
+         "variables": {"tas": {"day": [], "1hr": ["evaluation"]}}}
+    row = lambda freq, exp: {"collection": "CORDEX-CMIP6", "variable": "tas", "frequency": freq, "experiment": exp}
+    assert row_matches_watch(row("day", "ssp370"), w)         # daily: every scenario
+    assert row_matches_watch(row("1hr", "evaluation"), w)
+    assert not row_matches_watch(row("1hr", "ssp370"), w)     # hourly: evaluation only
+    assert not row_matches_watch(row("1hr", ""), w)
+
+
+@pytest.mark.parametrize("body, msg", [
+    ('[[watch]]\ncollection = "X"\nexperiment = "historical"\n[watch.variables]\n'
+     'tas = { day = "evaluation" }\n', "limited to experiment"),
+    ('[[watch]]\ncollection = "X"\n[watch.variables]\ntas = {}\n', "needs a frequency"),
+])
+def test_load_watchlist_rejects_bad_scenarios(tmp_path, body, msg):
     p = tmp_path / "w.toml"
     p.write_text(body)
     with pytest.raises(ValueError, match=msg):

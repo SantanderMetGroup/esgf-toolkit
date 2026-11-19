@@ -203,18 +203,27 @@ collection = "CORDEX-CMIP6"
 domain = "EUR-12"            # sent to STAC as domain_id
 
 [watch.variables]
-tas = ["1hr", "day"]         # hourly and daily
-tasmax = "day"               # daily only
-pr = "1hr"                   # hourly only
+tasmax = "day"                                 # daily, every scenario
+hurs = ["1hr", "day"]                          # hourly + daily, every scenario
+tas = { day = "all", "1hr" = "evaluation" }    # daily every scenario, hourly only evaluation
+pr = { "1hr" = ["evaluation", "historical"] }  # several scenarios: a list
 orog = "fx"
 ```
 
-Only the listed (variable, frequency) pairs are compared: `tasmax = "day"` does not
-include hourly `tasmax`. Frequencies are the ESGF names (`1hr`, `6hr`, `day`,
-`mon`, `fx`, ...). `variables` replaces the plain `variable` / `frequency` keys; a
-watch cannot use both. A watch without `variables` selects every variable.
-Internally each distinct frequency becomes one STAC query, because STAC filters are
-ANDed (one query for `tas` + `pr` + `1hr` + `day` would also select `tas` at `1hr`).
+**Scenarios** (the ESGF `experiment`: `evaluation`, `historical`, `ssp370`, ...)
+are optional per variable and frequency. A plain string or list of frequencies
+(`tasmax = "day"`) and `"all"` both mean *every scenario*; use the
+`{ frequency = scenario(s) }` form to narrow one frequency without touching the
+others. A watch-level `experiment = ...` key still works and is ANDed with these.
+
+Only the listed combinations are compared: `tasmax = "day"` does not include
+hourly `tasmax`, and `"1hr" = "evaluation"` does not include hourly `ssp370`.
+Frequencies are the ESGF names (`1hr`, `6hr`, `day`, `mon`, `fx`, ...).
+`variables` replaces the plain `variable` / `frequency` keys; a watch cannot use
+both. A watch without `variables` selects every variable. Internally each
+distinct (frequency, scenarios) combination becomes one STAC query, because STAC
+filters are ANDed (one query for `tas` + `pr`, `1hr` + `day` would also select
+`tas` at `1hr`).
 
 Each entry costs one STAC query per rebuild, so keep the list focused. The full
 `--compare` catalogue (tens of thousands of rows) is deliberately not published:

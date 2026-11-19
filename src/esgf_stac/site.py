@@ -57,22 +57,52 @@ _NUMERIC = {"n_years", "size_gb", "files_local", "files_remote", "size_local_gb"
 
 # --------------------------------------------------------------------------- watchlist
 
-def parse_variables(value, where: str) -> dict:
-    """``variables`` table -> {variable: [frequencies]} (sorted, de-duplicated).
+ALL_SCENARIOS = ("all", "*")
 
-    TOML:  ``tas = "day"``  or  ``hurs = ["1hr", "day"]``  (a comma-separated
-    string works too). Every variable needs at least one frequency.
+
+def _scenarios(value) -> list:
+    """Scenario (ESGF experiment) spec -> sorted list; [] means every scenario."""
+    values = parse_filter_values(value)
+    if not values or any(v.lower() in ALL_SCENARIOS for v in values):
+        return []
+    return sorted(set(values))
+
+
+def parse_variables(value, where: str) -> dict:
+    """``variables`` table -> {variable: {frequency: [scenarios]}}; [] = all scenarios.
+
+    Accepted TOML values per variable:
+      tas = "day"                              one frequency, every scenario
+      hurs = ["1hr", "day"]                    several frequencies, every scenario
+      tas = { day = "all", "1hr" = "evaluation" }   per-frequency scenarios
+                                                    (string, list, or "all")
     """
     if not isinstance(value, dict) or not value:
         raise ValueError(f"{where}: 'variables' must be a non-empty table such as "
                          f"[watch.variables] with entries like tas = \"day\"")
     out = {}
-    for var, freqs in value.items():
-        values = sorted(set(parse_filter_values(freqs)))
-        if not values:
+    for var, spec in value.items():
+        if isinstance(spec, dict):
+            freqs = {str(f): _scenarios(sc) for f, sc in spec.items()}
+        else:
+            freqs = {f: [] for f in sorted(set(parse_filter_values(spec)))}
+        if not freqs:
             raise ValueError(f"{where}: variable '{var}' needs a frequency (e.g. \"day\")")
-        out[str(var)] = values
+        out[str(var)] = freqs
     return out
+
+
+def _narrow(scenarios: list, watch_level: set, where: str, what: str) -> list:
+    """Combine a pair's scenarios with the watch-level ``experiment`` filter (AND)."""
+    if not watch_level:
+        return scenarios
+    if not scenarios:
+        return sorted(watch_level)
+    both = sorted(set(scenarios) & watch_level)
+    if not both:
+        raise ValueError(f"{where}: {what} lists scenario(s) {', '.join(scenarios)} but the watch "
+                         f"itself is limited to experiment = {', '.join(sorted(watch_level))}")
+    return both
 
 
 def load_watchlist(path: str) -> list:
@@ -103,6 +133,10 @@ def load_watchlist(path: str) -> list:
                 raise ValueError(f"{where}: use either 'variables' or {' / '.join(sorted(clash))}, not both")
             variables = parse_variables(entry["variables"], where)
         filters = {k: ",".join(parse_filter_values(entry[k])) for k in WATCH_KEYS if entry.get(k)}
+        watch_level = set(parse_filter_values(filters.get("experiment")))
+        for var, freqs in variables.items():
+            for freq, scenarios in freqs.items():
+                _narrow(scenarios, watch_level, where, f"{var} at {freq}")  # raises on a clash
         name = entry.get("name") or " · ".join([entry["collection"], *filters.values()])
         out.append({"name": name, "collection": entry["collection"],
                     "description": entry.get("description", ""), "filters": filters,
@@ -130,19 +164,29 @@ def stac_queries(watch: dict) -> list:
     """STAC filter dicts that together select exactly this watch.
 
     A plain watch is one query. With ``variables`` there is one query per distinct
-    frequency (variables sharing that frequency are OR-ed), because STAC filters
-    are ANDed: asking for variable=pr,tas and frequency=1hr,day in one query would
+    (frequency, scenarios) combination - variables sharing both are OR-ed - because
+    STAC filters are ANDed: variable=pr,tas + frequency=1hr,day in one query would
     also select tas at 1hr when only tas at day was requested.
     """
     base = stac_filters(watch)
-    by_freq = {}
+    watch_level = set(parse_filter_values(base.get("experiment")))
+    groups = {}
     for var, freqs in (watch.get("variables") or {}).items():
-        for freq in freqs:
-            by_freq.setdefault(freq, []).append(var)
-    if not by_freq:
+        for freq, scenarios in freqs.items():
+            both = sorted(set(scenarios) & watch_level) if scenarios and watch_level else \
+                (scenarios or sorted(watch_level))
+            if scenarios and watch_level and not both:
+                continue  # can never match (load_watchlist rejects this)
+            groups.setdefault((freq, tuple(both)), []).append(var)
+    if not groups:
         return [base]
-    return [{**base, "variable": ",".join(vs), "frequency": freq}
-            for freq, vs in sorted(by_freq.items())]
+    queries = []
+    for (freq, scenarios), vs in sorted(groups.items()):
+        q = {**base, "variable": ",".join(vs), "frequency": freq}
+        if scenarios:
+            q["experiment"] = ",".join(scenarios)
+        queries.append(q)
+    return queries
 
 
 def _row_values(row: dict, key: str) -> set:
@@ -160,10 +204,14 @@ def row_matches_watch(row: dict, watch: dict) -> bool:
         if not _row_values(row, key) & set(parse_filter_values(raw)):
             return False
     pairs = watch.get("variables")
-    if pairs:  # explicit (variable, frequency) pairs
-        freqs = _row_values(row, "frequency")
-        if not any(f in pairs.get(v, ()) for v in _row_values(row, "variable") for f in freqs):
-            return False
+    if pairs:  # explicit (variable, frequency[, scenario]) combinations
+        freqs, scenarios = _row_values(row, "frequency"), _row_values(row, "experiment")
+        for var in _row_values(row, "variable"):
+            for freq in freqs:
+                wanted = pairs.get(var, {}).get(freq)
+                if wanted is not None and (not wanted or scenarios & set(wanted)):
+                    return True
+        return False
     return True
 
 

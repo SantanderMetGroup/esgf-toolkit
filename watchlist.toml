@@ -6,43 +6,49 @@
 #   model, rcm_model, driving_model, experiment, grid, member, domain, activity
 #
 # Variables are listed explicitly in a [watch.variables] table, one line per
-# variable: the value is the temporal resolution (frequency), or a list of them:
+# variable. The value says which temporal resolutions (frequencies) to watch and,
+# optionally, which scenarios (ESGF "experiment") for each:
 #
 #   [watch.variables]
-#   tas = "day"                  # tas, daily only
-#   hurs = ["1hr", "day"]        # hurs, hourly and daily
+#   tasmax = "day"                                  # daily, every scenario
+#   hurs = ["1hr", "day"]                           # hourly + daily, every scenario
+#   tas = { day = "all", "1hr" = "evaluation" }     # daily every scenario,
+#                                                   # hourly only "evaluation"
+#   pr = { "1hr" = ["evaluation", "historical"] }   # several scenarios: a list
 #
-# Only the listed (variable, frequency) pairs are compared with ESGF - tas at
-# "1hr" is NOT included by `tas = "day"`. Frequencies are the ESGF names:
-# 1hr, 6hr, day, mon, fx, ...  `variables` replaces the plain `variable` /
-# `frequency` keys; a watch cannot use both.
+# No scenario given (or "all") means every scenario. Only the listed combinations
+# are compared with ESGF - `tas = "day"` does not include tas at "1hr", and
+# `"1hr" = "evaluation"` does not include hourly ssp370. Frequencies are the ESGF
+# names: 1hr, 6hr, day, mon, fx, ...  `variables` replaces the plain `variable` /
+# `frequency` keys; a watch cannot use both. A watch-level `experiment` key still
+# works and is ANDed with the per-variable scenarios.
 #
 # `name` is the card title on the site, `description` an optional subtitle.
 # Every watch is a STAC query on each site rebuild, so list only what you need.
 
 [[watch]]
 name = "CORDEX-CMIP6 EUR-12"
-description = "Variables downloaded so far, plus hourly precipitation"
+description = "Variables downloaded so far, plus hourly precipitation (hourly: evaluation only)"
 collection = "CORDEX-CMIP6"
 domain = "EUR-12"
 
 [watch.variables]
-# near-surface fields
-tas = ["1hr", "day"]
+# near-surface fields: daily for every scenario, hourly only "evaluation"
+tas = { day = "all", "1hr" = "evaluation" }
 tasmax = "day"
 tasmin = "day"
-hurs = ["1hr", "day"]
+hurs = { day = "all", "1hr" = "evaluation" }
 huss = "day"
 ps = "day"
-sfcWind = ["1hr", "day"]
-# precipitation (not downloaded yet)
-pr = "1hr"
-# radiation, hourly
-rlds = "1hr"
-rlus = "1hr"
-rsds = "1hr"
-rsus = "1hr"
-# fixed fields
+sfcWind = { day = "all", "1hr" = "evaluation" }
+# precipitation (not downloaded yet), hourly "evaluation" like the other hourly fields
+pr = { "1hr" = "evaluation" }
+# radiation, hourly "evaluation"
+rlds = { "1hr" = "evaluation" }
+rlus = { "1hr" = "evaluation" }
+rsds = { "1hr" = "evaluation" }
+rsus = { "1hr" = "evaluation" }
+# fixed fields, every scenario
 orog = "fx"
 sftlf = "fx"
 
